@@ -3,6 +3,7 @@ import {
 	type Component,
 	type Focusable,
 	Input,
+	isKeyRepeat,
 	Key,
 	Markdown,
 	matchesKey,
@@ -67,7 +68,7 @@ class PickDialog implements Component {
 
 	handleInput(data: string): void {
 		if (matchesKey(data, Key.escape)) {
-			this.#list.onCancel?.();
+			if (!isKeyRepeat(data)) this.#list.onCancel?.();
 			return;
 		}
 		this.#list.handleInput(data);
@@ -129,12 +130,13 @@ class ReaderDialog implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (matchesKey(data, Key.escape) || data === "q") this.#done(undefined);
+		const once = !isKeyRepeat(data);
+		if (once && (matchesKey(data, Key.escape) || data === "q")) this.#done(undefined);
 		else if (matchesKey(data, Key.up)) this.#top = Math.max(0, this.#top - 1);
 		else if (matchesKey(data, Key.down)) this.#top = Math.min(Math.max(0, this.#lines - READER_LINES), this.#top + 1);
 		else if (matchesKey(data, Key.pageUp)) this.#top = Math.max(0, this.#top - READER_LINES);
 		else if (matchesKey(data, Key.pageDown)) this.#top = Math.min(Math.max(0, this.#lines - READER_LINES), this.#top + READER_LINES);
-		else {
+		else if (once) {
 			const action = this.#actions.find((a) => a.key === data);
 			if (action !== undefined) this.#done(action.key);
 		}

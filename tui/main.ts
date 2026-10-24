@@ -8,6 +8,8 @@ import {
 	type Component,
 	Container,
 	Editor,
+	isKeyRelease,
+	isKeyRepeat,
 	isViewportTUI,
 	Key,
 	matchesKey,
@@ -280,8 +282,10 @@ const rename = async (branch: BranchInfo) => {
 const noteTitle = (text: string, max = 60): string => {
 	const sentence = (/^[^.!?\n]+[.!?]?/.exec(text.trim())?.[0] ?? text).trim();
 	if (sentence.length <= max) return sentence;
-	const cut = sentence.slice(0, max - 1);
-	return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), 20)).trimEnd()}…`;
+	// Cut at the last space that leaves room for the ellipsis; a first word longer than that stays whole.
+	const space = sentence.lastIndexOf(" ", max - 1);
+	const kept = space > 0 ? sentence.slice(0, space) : (sentence.split(/\s/)[0] ?? sentence);
+	return `${kept.trimEnd()}…`;
 };
 
 const manageNotes = async () => {
@@ -420,6 +424,10 @@ editor.onSubmit = (value) => {
 };
 
 tui.addInputListener((data) => {
+	// Listeners get every key event, including the release and repeat events terminals with the
+	// Kitty keyboard protocol send (pi-tui filters those only for the focused component). Toggles
+	// act on the press alone: a release must not close what the press just opened.
+	if (isKeyRelease(data) || isKeyRepeat(data)) return undefined;
 	if (matchesKey(data, Key.ctrl("c"))) {
 		tui.stop();
 		client.close();
