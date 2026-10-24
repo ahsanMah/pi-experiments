@@ -11,6 +11,8 @@ import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
 import { BranchesApp } from "./app.ts";
 
 const port = Number(process.env.PORT ?? 8787);
+// No authentication, so only local clients by default.
+const host = process.env.HOST ?? "127.0.0.1";
 const database = process.env.PI_BRANCHES_DB ?? "./branches.sqlite";
 const model = process.env.PI_MODEL ?? "faux/echo";
 const cwd = process.env.PI_BRANCHES_CWD;
@@ -150,8 +152,8 @@ wss.on("connection", (socket: WebSocket) => {
 	});
 });
 
-server.listen(port, () => {
-	console.log(`pi-branches on http://localhost:${port} (model ${model}, storage ${database})`);
+server.listen(port, host, () => {
+	console.log(`pi-branches on http://${host}:${port} (model ${model}, storage ${database})`);
 });
 
 const shutdown = async () => {

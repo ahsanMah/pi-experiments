@@ -1,0 +1,122 @@
+// The active branch's transcript: committed entries of its ConversationView, then the
+// live partial answer and tool round from docs["pi.live"]. Entries are immutable, so
+// each entry's components are built once and reused across commits.
+import { type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
+import type { BranchInfo } from "../shared/protocol.ts";
+import type { ConversationView, LiveToolSlot, ViewEntry } from "./client.ts";
+import { markdownTheme, style } from "./theme.ts";
+
+type Block = { type: string; text?: string; thinking?: string; name?: string; arguments?: unknown };
+
+const blocksOf = (content: unknown): Block[] =>
+	typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? (content as Block[]) : [];
+
+const textOf = (content: unknown): string =>
+	blocksOf(content)
+		.filter((block) => block.type === "text")
+		.map((block) => block.text ?? "")
+		.join("");
+
+const brief = (value: unknown, max = 80): string => {
+	const text = (typeof value === "string" ? value : JSON.stringify(value) ?? "").replace(/\s+/g, " ").trim();
+	return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+};
+
+const toolCallLine = (block: Block): Component =>
+	new TruncatedText(style.yellow(`  ⚙ ${block.name ?? "tool"} `) + style.dim(brief(block.arguments)), 1, 0);
+
+/** Components for one committed entry; empty for entries the transcript doesn't show. */
+const renderEntry = (entry: ViewEntry): Component[] => {
+	const message = entry.model?.[0];
+	switch (entry.kind) {
+		case "pi.user":
+			return [new Spacer(1), new Markdown(textOf(message?.content), 1, 0, markdownTheme, { bgColor: style.userBg })];
+		case "pi.assistant": {
+			const parts: Component[] = [];
+			const blocks = blocksOf(message?.content);
+			const thinking = blocks.filter((block) => block.type === "thinking").map((block) => block.thinking ?? "").join("");
+			if (thinking.trim() !== "") parts.push(new Markdown(thinking, 1, 0, markdownTheme, { color: style.dim, italic: true }));
+			const text = textOf(message?.content);
+			if (text.trim() !== "") parts.push(new Spacer(1), new Markdown(text, 1, 0, markdownTheme));
+			for (const block of blocks) if (block.type === "toolCall") parts.push(toolCallLine(block));
+			return parts;
+		}
+		case "pi.tool-result": {
+			const result = textOf(message?.content);
+			const mark = message?.isError === true ? style.red("  ↳ ") : style.dim("  ↳ ");
+			return [new TruncatedText(mark + style.dim(`${message?.toolName ?? "result"}: ${brief(result, 120)}`), 1, 0)];
+		}
+		case "branches.shared": {
+			const data = entry.data as { title?: string } | undefined;
+			return [new Spacer(1), new TruncatedText(style.magenta(`  ⇄ Shared into this branch: ${data?.title ?? "context"}`), 1, 0)];
+		}
+		case "pi.compaction":
+			return [new Spacer(1), new TruncatedText(style.dim("  ⋯ earlier context compacted"), 1, 0)];
+		case "pi.reset":
+			return [new Spacer(1), new TruncatedText(style.dim("  ⟲ context reset"), 1, 0)];
+		default:
+			return [];
+	}
+};
+
+const liveToolLine = (slot: LiveToolSlot, spinner: string): Component => {
+	const icon = slot.status === "done" ? style.green("✓") : style.yellow(spinner);
+	const output = typeof slot.output === "string" && slot.output.trim() !== "" ? style.dim(` ${brief(slot.output.split("\n").at(-1), 80)}`) : "";
+	return new TruncatedText(`  ${icon} ${style.yellow(slot.name ?? "tool")}${output}`, 1, 0);
+};
+
+export class TranscriptView extends Container {
+	readonly #cache = new Map<number, Component[]>();
+	#conversationId: number | undefined;
+
+	/** Rebuild from the view; `branches` names the parent at the fork boundary. */
+	update(conversationId: number, view: ConversationView | undefined, branches: readonly BranchInfo[], spinner: string): void {
+		if (conversationId !== this.#conversationId) {
+			this.#cache.clear();
+			this.#conversationId = conversationId;
+		}
+		this.clear();
+		if (view === undefined) {
+			this.addChild(new Text(style.dim("Loading branch…"), 1, 1));
+			return;
+		}
+		const branch = branches.find((b) => b.id === conversationId);
+		let inherited = false;
+		let crossedFork = false;
+		for (const entry of view.entries) {
+			const own = entry.conversationId === conversationId;
+			if (!own && !inherited) inherited = true;
+			if (own && inherited && !crossedFork) {
+				crossedFork = true;
+				const parent = branches.find((b) => b.id === branch?.parent?.conversationId);
+				this.addChild(new Spacer(1));
+				this.addChild(
+					new TruncatedText(style.cyan(`── ⑂ branched from "${parent?.title || (parent?.parent === undefined ? "Main" : `Branch ${parent?.id}`)}" — "${branch?.title || "this branch"}" continues here ──`), 1, 0),
+				);
+			}
+			let parts = this.#cache.get(entry.id);
+			if (parts === undefined) {
+				parts = renderEntry(entry);
+				this.#cache.set(entry.id, parts);
+			}
+			for (const part of parts) this.addChild(part);
+		}
+
+		const live = view.docs["pi.live"];
+		const partial = live?.generation?.message?.content;
+		if (partial !== undefined) {
+			const text = textOf(partial);
+			if (text.trim() !== "") {
+				this.addChild(new Spacer(1));
+				this.addChild(new Markdown(text, 1, 0, markdownTheme));
+			}
+			for (const block of blocksOf(partial)) if (block.type === "toolCall") this.addChild(toolCallLine(block));
+		}
+		for (const slot of live?.tools ?? []) if (slot.status !== "done") this.addChild(liveToolLine(slot, spinner));
+		if (live?.generation?.retry !== undefined) {
+			this.addChild(new TruncatedText(style.red(`  retrying: ${brief(live.generation.retry.error, 100)}`), 1, 0));
+		}
+		if (live?.run !== undefined) this.addChild(new TruncatedText(style.cyan(`  ${spinner} working…`), 1, 0));
+		this.addChild(new Spacer(1));
+	}
+}
