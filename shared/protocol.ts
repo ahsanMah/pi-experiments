@@ -106,6 +106,8 @@ export type ClientMessage = { readonly requestId?: string } & (
 			readonly text?: string;
 	  }
 	| { readonly t: "unshare"; readonly noteId: string }
+	/** Full text of a user or assistant entry (tree previews are cut short). Ack result: { text }. */
+	| { readonly t: "text"; readonly conversationId: ConversationId; readonly entryId: EntryId }
 );
 
 export type ServerMessage =

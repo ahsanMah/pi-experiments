@@ -22,6 +22,7 @@ const socket = new WebSocket(`ws://localhost:${port}/ws`);
 await new Promise((resolve) => socket.once("open", resolve));
 
 let tree: TreeIndex | undefined;
+const opsSeen = new Map<number, number>();
 const views = new Map<number, unknown>();
 const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
 const treeWaiters: { check: (tree: TreeIndex) => boolean; resolve: (tree: TreeIndex) => void }[] = [];
@@ -42,6 +43,7 @@ socket.on("message", (raw) => {
 			views.set(message.conversationId, message.value);
 			break;
 		case "ops":
+			opsSeen.set(message.conversationId, (opsSeen.get(message.conversationId) ?? 0) + 1);
 			views.set(message.conversationId, applyImmutable(views.get(message.conversationId), message.ops as never));
 			break;
 		case "ack":
@@ -106,6 +108,39 @@ try {
 	const sections = view.entries.flatMap((e) => e.model ?? []).filter((m) => m.role === "system").map((m) => JSON.stringify(m));
 	assert(sections.some((s) => s.includes("shared-context")), "shared context reached the side branch's system prompt");
 	assert(views.has(main.id) && (views.get(main.id) as { entries: unknown[] }).entries.length > 0, "ops applied to main's live view");
+	// A long message comes back whole for "Edit & branch", though its tree preview is cut short.
+	const long = `Long question ${"with many words ".repeat(30)}end`;
+	await request({ t: "send", conversationId: side, text: long });
+	const longTree = await until((t) => t.nodes.some((n) => n.conversationId === side && n.preview.startsWith("Long question")), "long message node");
+	const longNode = longTree.nodes.find((n) => n.conversationId === side && n.preview.startsWith("Long question"))!;
+	const { text } = await request<{ text: string }>({ t: "text", conversationId: side, entryId: longNode.id });
+	assert(longNode.preview.endsWith("…") && text === long, "full text of a long message is available");
+
+	// A share with every branch leaves a marker in each existing branch.
+	await until((t) => t.branches.every((b) => !b.busy), "idle before wildcard share");
+	await request({ t: "share", mode: "note", to: "*", title: "For everyone", text: "Use SQLite." });
+	await until(
+		(t) => [main.id, side].every((id) => t.nodes.filter((n) => n.conversationId === id && n.role === "shared").length >= (id === side ? 2 : 1)),
+		"wildcard share markers",
+	);
+	assert(true, "a share with every branch marks each branch");
+
+	// Rapid switching leaves the subscription in its last requested state.
+	for (let i = 0; i < 5; i++) {
+		socket.send(JSON.stringify({ t: "unsubscribe", conversationId: main.id }));
+		socket.send(JSON.stringify({ t: "subscribe", conversationId: main.id }));
+	}
+	await request({ t: "unsubscribe", conversationId: main.id });
+	const opsBefore = opsSeen.get(main.id) ?? 0;
+	await request({ t: "send", conversationId: main.id, text: "Anyone watching?" });
+	await until((t) => t.branches.every((b) => !b.busy) && t.nodes.some((n) => n.preview.includes("Anyone watching")), "answer while unsubscribed");
+	assert((opsSeen.get(main.id) ?? 0) === opsBefore, "no frames arrive after the last unsubscribe");
+
+	// Malformed input gets an error and the server keeps serving.
+	socket.send("null");
+	socket.send("42");
+	await request({ t: "rename", conversationId: side, title: "Still alive" });
+	assert(true, "server survives null and non-object messages");
 	console.log("smoke test passed");
 } finally {
 	socket.close();

@@ -12,10 +12,24 @@ export type Connection = {
 
 export const connect = (app: BranchesApp, send: (message: ServerMessage) => void, context: Context): Connection => {
 	const watches = new Map<ConversationId, ConversationWatch>();
+	let closed = false;
 
 	send({ t: "hello", models: app.availableModels, defaultModel: app.defaultModel });
 	send({ t: "tree", tree: app.tree });
 	const offTree = app.onTree((tree) => send({ t: "tree", tree }));
+
+	// Subscription changes for one conversation run one after another, so an unsubscribe can't
+	// overtake a subscribe that is still opening its watch and leave that watch running.
+	const lanes = new Map<ConversationId, Promise<unknown>>();
+	const inLane = <T>(id: ConversationId, run: () => Promise<T>): Promise<T> => {
+		const next = (lanes.get(id) ?? Promise.resolve()).then(run, run);
+		const settled = next.catch(() => {});
+		lanes.set(id, settled);
+		void settled.then(() => {
+			if (lanes.get(id) === settled) lanes.delete(id);
+		});
+		return next;
+	};
 
 	const subscribe = async (id: ConversationId) => {
 		if (watches.has(id)) {
@@ -25,6 +39,10 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 		const conversation = await app.harness.conversation(id, context);
 		if (conversation === undefined) throw new Error(`No branch ${id}`);
 		const watch = await conversation.watch(context);
+		if (closed) {
+			await watch.stop();
+			return;
+		}
 		watches.set(id, watch);
 		send({ t: "view", conversationId: id, value: watch.value });
 		watch.start(async (_value, ops) => {
@@ -41,10 +59,14 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 
 	const handle = async (message: ClientMessage): Promise<unknown> => {
 		switch (message.t) {
-			case "subscribe":
-				return subscribe(message.conversationId as ConversationId);
-			case "unsubscribe":
-				return unsubscribe(message.conversationId as ConversationId);
+			case "subscribe": {
+				const id = message.conversationId as ConversationId;
+				return inLane(id, () => subscribe(id));
+			}
+			case "unsubscribe": {
+				const id = message.conversationId as ConversationId;
+				return inLane(id, () => unsubscribe(id));
+			}
 			case "send":
 				return app.send(message.conversationId as ConversationId, message.text, message.whenBusy ?? "followUp", context);
 			case "abort":
@@ -81,25 +103,34 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 			}
 			case "unshare":
 				return app.removeNote(message.noteId, context);
+			case "text":
+				return { text: await app.entryText(message.conversationId as ConversationId, message.entryId as EntryId, context) };
 		}
 	};
 
 	return {
 		async receive(message) {
+			// Decoded JSON can be anything; only objects naming a message type are requests.
+			if (typeof message !== "object" || message === null || typeof (message as { t?: unknown }).t !== "string") {
+				send({ t: "error", message: "Malformed message" });
+				return;
+			}
+			const requestId = typeof message.requestId === "string" ? message.requestId : undefined;
 			try {
 				const result = await handle(message);
-				if (message.requestId !== undefined) send({ t: "ack", requestId: message.requestId, result });
+				if (requestId !== undefined) send({ t: "ack", requestId, result });
 			} catch (error) {
 				send({
 					t: "error",
-					...(message.requestId !== undefined ? { requestId: message.requestId } : {}),
+					...(requestId !== undefined ? { requestId } : {}),
 					message: error instanceof Error ? error.message : String(error),
 				});
 			}
 		},
 		close() {
+			closed = true;
 			offTree();
-			for (const id of [...watches.keys()]) void unsubscribe(id);
+			for (const id of new Set([...watches.keys(), ...lanes.keys()])) void inLane(id, () => unsubscribe(id));
 		},
 	};
 };

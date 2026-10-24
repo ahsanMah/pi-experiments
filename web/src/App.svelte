@@ -89,9 +89,11 @@
 	};
 
 	const branchAfter = (node: TreeNode) => void fork(node.conversationId, node.id);
-	const editBranch = (node: TreeNode) => {
+	const editBranch = async (node: TreeNode) => {
 		if (node.before === undefined) return;
-		void fork(node.conversationId, node.before, node.preview.endsWith("…") ? "" : node.preview);
+		// The tree's preview is cut short; ask for the message itself.
+		const { text } = await client.request<{ text: string }>({ t: "text", conversationId: node.conversationId, entryId: node.id });
+		await fork(node.conversationId, node.before, text);
 	};
 	const shareFrom = (conversationId: number, at?: number) => {
 		shareRequest = { from: { conversationId, ...(at !== undefined ? { at } : {}) } };

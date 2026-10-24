@@ -90,7 +90,7 @@ export const createBranchesExtension = (host: BranchesHost) =>
 				}),
 				execute: async (args, _api, context) => {
 					const text = await host.transcript(args.branch as ConversationId, undefined, context);
-					const max = args.maxChars ?? 20_000;
+					const max = Math.max(1, Math.floor(args.maxChars ?? 20_000));
 					const kept = text.length > max ? `[…${text.length - max} earlier characters omitted]\n${text.slice(-max)}` : text;
 					return { output: [{ type: "text", text: kept }] };
 				},

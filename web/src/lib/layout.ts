@@ -50,8 +50,8 @@ export const layoutTree = (nodes: readonly TreeNode[], direction: Direction): Pl
 			queue.push({ node, start: offset, depth });
 			offset += width.get(node.id)!;
 		}
-		while (queue.length > 0) {
-			const { node, start: from, depth: level } = queue.shift()!;
+		for (let head = 0; head < queue.length; head++) {
+			const { node, start: from, depth: level } = queue[head]!;
 			const slots = width.get(node.id)!;
 			const across = (from + slots / 2 - 0.5) * span;
 			const along = level * step;

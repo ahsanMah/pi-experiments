@@ -193,6 +193,15 @@ export class BranchesApp {
 		await this.rebuildNow(context);
 	}
 
+	/** Full text of one entry, as its conversation sees it. */
+	async entryText(id: ConversationId, entryId: EntryId, context: Context): Promise<string> {
+		const conversation = await this.#conversation(id, context);
+		const page = await conversation.entries({ minEntryId: entryId, maxEntryId: entryId }, 1, undefined, context);
+		const entry = page.items[0];
+		if (entry === undefined) throw new Error(`No message ${entryId} in branch ${id}`);
+		return textOf(entry.model?.[0]?.content as never);
+	}
+
 	async describeBranches(context: Context): Promise<string> {
 		const tree = await this.indexer.build(context);
 		return tree.branches
@@ -216,15 +225,18 @@ export class BranchesApp {
 		await this.harness.commit(async (tx) => {
 			(await tx.doc(SharedNotesDoc)).notes.push(stored as never);
 		}, context);
-		// A display-only marker in each named target, so the share shows on the canvas where it landed.
-		if (stored.to !== "*") {
-			for (const target of stored.to) {
-				const conversation = await this.harness.conversation(target as ConversationId, context);
-				await conversation?.submit(
-					{ type: "write", entry: { kind: SHARED_ENTRY, data: { noteId: stored.id, title: stored.title } } },
-					context,
-				);
-			}
+		// A display-only marker in each target, so the share shows on the canvas where it landed. A share with
+		// every branch marks the branches that exist now; later branches still see it in their prompt.
+		const targets =
+			stored.to === "*"
+				? (await this.indexer.conversations(context)).map((record) => record.id)
+				: stored.to.map((target) => target as ConversationId);
+		for (const target of targets) {
+			const conversation = await this.harness.conversation(target, context);
+			await conversation?.submit(
+				{ type: "write", entry: { kind: SHARED_ENTRY, data: { noteId: stored.id, title: stored.title } } },
+				context,
+			);
 		}
 		this.scheduleRebuild();
 		return stored;
