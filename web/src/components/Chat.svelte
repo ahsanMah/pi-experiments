@@ -1,0 +1,333 @@
+<script lang="ts">
+	import { tick } from "svelte";
+	import type { BranchInfo, TreeNode } from "../../../shared/protocol.ts";
+	import { branchHue } from "../lib/layout.ts";
+	import { renderMarkdown } from "../lib/markdown.ts";
+	import { textOf, type ConversationView, type ViewEntry } from "../lib/view.ts";
+	import Message from "./Message.svelte";
+
+	type Props = {
+		branch: BranchInfo;
+		view: ConversationView | undefined;
+		nodes: readonly TreeNode[];
+		models: readonly string[];
+		focusId: number | null;
+		draft: string;
+		send: (text: string, whenBusy: "followUp" | "steer") => Promise<void>;
+		abort: () => void;
+		branchAfter: (entryId: number) => void;
+		editBranch: (node: TreeNode) => void;
+		share: (entryId: number) => void;
+		rename: (title: string) => void;
+		configure: (model: string) => void;
+	};
+	let { branch, view, nodes, models, focusId, draft = $bindable(), send, abort, branchAfter, editBranch, share, rename, configure }: Props = $props();
+
+	let scroller: HTMLElement | undefined = $state();
+	let input: HTMLTextAreaElement | undefined = $state();
+	let sending = $state(false);
+	let stick = true;
+
+	const entries = $derived(view?.entries ?? []);
+	const results = $derived(
+		new Map(
+			entries
+				.filter((e) => e.kind === "pi.tool-result")
+				.flatMap((e): [string, ViewEntry][] => {
+					const m = e.model?.[0];
+					return m?.role === "toolResult" ? [[m.toolCallId, e]] : [];
+				}),
+		),
+	);
+	const nodeById = $derived(new Map(nodes.map((n) => [n.id, n])));
+	const live = $derived(view?.docs["pi.live"]);
+	const partial = $derived(textOf(live?.generation?.message?.content));
+	const runningTools = $derived((live?.tools ?? []).filter((t) => t.status !== "done"));
+	const queued = $derived(view?.docs["pi.inbox"]?.items.length ?? 0);
+	const forkAt = $derived(branch.parent?.at);
+
+	// Stay at the bottom while streaming unless the user scrolled up.
+	const onScroll = () => {
+		if (scroller === undefined) return;
+		stick = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+	};
+	$effect(() => {
+		void entries.length;
+		void partial;
+		if (stick && focusId === null) void tick().then(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
+	});
+	$effect(() => {
+		if (focusId === null) return;
+		const id = focusId;
+		void tick().then(() => scroller?.querySelector(`[data-entry="${id}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
+	});
+	$effect(() => {
+		void branch.id;
+		void tick().then(() => input?.focus());
+	});
+
+	const submit = async (whenBusy: "followUp" | "steer") => {
+		const text = draft.trim();
+		if (text === "" || sending) return;
+		sending = true;
+		try {
+			await send(text, whenBusy);
+			draft = "";
+			stick = true;
+		} finally {
+			sending = false;
+		}
+	};
+
+	const onKey = (event: KeyboardEvent) => {
+		if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+			event.preventDefault();
+			void submit(event.altKey && branch.busy ? "steer" : "followUp");
+		}
+	};
+
+	let editingTitle = $state(false);
+	let titleDraft = $state("");
+</script>
+
+<section class="chat" style="--hue: {branchHue(branch.id)}">
+	<header>
+		<span class="dot" class:busy={branch.busy}></span>
+		{#if editingTitle}
+			<!-- svelte-ignore a11y_autofocus -->
+			<input
+				class="title-input"
+				bind:value={titleDraft}
+				autofocus
+				onkeydown={(e) => {
+					if (e.key === "Enter") {
+						rename(titleDraft);
+						editingTitle = false;
+					} else if (e.key === "Escape") editingTitle = false;
+				}}
+				onblur={() => (editingTitle = false)}
+			/>
+		{:else}
+			<button class="title" title="Rename" onclick={() => ((titleDraft = branch.title), (editingTitle = true))}>{branch.title}</button>
+		{/if}
+		{#if branch.parent}<span class="muted">forked from #{branch.parent.conversationId}</span>{/if}
+		<span class="spacer"></span>
+		{#if branch.sharedIn > 0}<span class="pill" title="Shared notes this branch's model sees">⇄ {branch.sharedIn}</span>{/if}
+		{#if branch.costUsd > 0}<span class="muted">${branch.costUsd.toFixed(4)}</span>{/if}
+		<select value={branch.model ?? ""} onchange={(e) => configure(e.currentTarget.value)} title="Model for this branch">
+			{#if branch.model && !models.includes(branch.model)}<option value={branch.model}>{branch.model}</option>{/if}
+			{#each models as model (model)}<option value={model}>{model}</option>{/each}
+		</select>
+	</header>
+
+	<div class="scroller" bind:this={scroller} onscroll={onScroll}>
+		<div class="messages">
+			{#if entries.length === 0 && !branch.busy}
+				<p class="empty">Start the conversation below. Branch from any message to explore a side question while this one keeps going.</p>
+			{/if}
+			{#each entries as entry (entry.id)}
+				{@const node = nodeById.get(entry.id)}
+				{@const inherited = entry.conversationId !== branch.id}
+				<Message
+					{entry}
+					{results}
+					{inherited}
+					focused={entry.id === focusId}
+					actions={node !== undefined}
+					branch={() => branchAfter(entry.id)}
+					editBranch={node?.role === "user" && node.before !== undefined ? () => editBranch(node) : undefined}
+					share={() => share(entry.id)}
+				/>
+				{#if forkAt !== undefined && entry.id === forkAt}
+					<div class="fork-line"><span>branch “{branch.title}” starts here</span></div>
+				{/if}
+			{/each}
+			{#if branch.busy}
+				<div class="live">
+					{#if partial !== ""}
+						<div class="markdown">{@html renderMarkdown(partial)}</div>
+					{/if}
+					{#each runningTools as tool (tool.callId)}
+						<div class="tool-running"><code>{tool.name}</code> running…{#if tool.output}<pre>{tool.output.slice(-1500)}</pre>{/if}</div>
+					{/each}
+					{#if live?.generation?.retry}<div class="muted">Retrying: {live.generation.retry.error}</div>{/if}
+					<div class="typing"><span></span><span></span><span></span></div>
+				</div>
+			{/if}
+		</div>
+	</div>
+
+	<footer>
+		<textarea
+			bind:this={input}
+			bind:value={draft}
+			onkeydown={onKey}
+			rows="2"
+			placeholder={branch.busy ? "Working… Enter queues a follow-up, Alt+Enter steers" : `Message “${branch.title}”`}
+		></textarea>
+		<div class="buttons">
+			{#if branch.busy}
+				<button onclick={() => submit("steer")} disabled={draft.trim() === ""} title="Join the running work after the current tool round">Steer</button>
+				<button onclick={() => submit("followUp")} disabled={draft.trim() === ""}>Queue{queued > 0 ? ` (${queued})` : ""}</button>
+				<button class="danger" onclick={abort}>Stop</button>
+			{:else}
+				<button class="primary" onclick={() => submit("followUp")} disabled={draft.trim() === "" || sending}>Send</button>
+			{/if}
+		</div>
+	</footer>
+</section>
+
+<style>
+	.chat {
+		display: flex;
+		flex-direction: column;
+		height: 100%;
+		min-width: 0;
+		background: var(--bg);
+	}
+	header {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 10px 16px;
+		border-bottom: 1px solid var(--border);
+		border-top: 3px solid hsl(var(--hue) 60% 55%);
+		min-height: 28px;
+	}
+	.title {
+		font-weight: 600;
+		font-size: 15px;
+		background: none;
+		border: none;
+		padding: 0;
+		color: var(--text);
+		cursor: text;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.title-input {
+		font-weight: 600;
+		font-size: 15px;
+	}
+	.dot {
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		flex: none;
+		background: hsl(var(--hue) 60% 55%);
+	}
+	.dot.busy {
+		animation: pulse 1s ease-in-out infinite;
+	}
+	@keyframes pulse {
+		50% {
+			opacity: 0.25;
+		}
+	}
+	.spacer {
+		flex: 1;
+	}
+	.muted {
+		color: var(--text-muted);
+		font-size: 12px;
+		white-space: nowrap;
+	}
+	.pill {
+		font-size: 12px;
+		padding: 1px 8px;
+		border-radius: 999px;
+		background: var(--accent-soft);
+		white-space: nowrap;
+	}
+	select {
+		max-width: 220px;
+	}
+	.scroller {
+		flex: 1;
+		overflow-y: auto;
+	}
+	.messages {
+		max-width: 780px;
+		margin: 0 auto;
+		padding: 16px 20px 24px;
+	}
+	.empty {
+		color: var(--text-muted);
+		text-align: center;
+		margin-top: 20vh;
+	}
+	.fork-line {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 18px 0;
+		color: hsl(var(--hue) 55% 50%);
+		font-size: 12px;
+	}
+	.fork-line::before,
+	.fork-line::after {
+		content: "";
+		flex: 1;
+		border-top: 1px dashed currentColor;
+	}
+	.live .markdown :global(p) {
+		margin: 0.4em 0;
+	}
+	.tool-running {
+		font-size: 13px;
+		color: var(--text-muted);
+	}
+	.tool-running pre {
+		font-size: 12px;
+		max-height: 160px;
+		overflow: auto;
+		background: var(--surface-muted);
+		padding: 6px;
+		border-radius: 6px;
+	}
+	.typing {
+		display: flex;
+		gap: 4px;
+		padding: 6px 4px;
+	}
+	.typing span {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--text-muted);
+		animation: pulse 1s infinite;
+	}
+	.typing span:nth-child(2) {
+		animation-delay: 0.2s;
+	}
+	.typing span:nth-child(3) {
+		animation-delay: 0.4s;
+	}
+	footer {
+		display: flex;
+		gap: 8px;
+		padding: 12px 16px;
+		border-top: 1px solid var(--border);
+		max-width: 820px;
+		width: 100%;
+		margin: 0 auto;
+		box-sizing: border-box;
+	}
+	textarea {
+		flex: 1;
+		resize: none;
+		font: inherit;
+		padding: 8px 12px;
+		border-radius: 12px;
+		border: 1px solid var(--border);
+		background: var(--surface);
+		color: var(--text);
+	}
+	.buttons {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		justify-content: flex-end;
+	}
+</style>

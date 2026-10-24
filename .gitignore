@@ -1,0 +1,6 @@
+node_modules/
+web/dist/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+web/dist-demo/
