@@ -11,6 +11,21 @@
 	color-scheme: light;
 }
 
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--bg: #121216;
+		--surface: #1b1b21;
+		--surface-muted: #16161b;
+		--border: #2c2c35;
+		--text: #ececf1;
+		--text-muted: #9a9aa6;
+		--accent: #7b8fff;
+		--accent-soft: rgb(123 143 255 / 0.18);
+		--danger: #ef6b80;
+		color-scheme: dark;
+}
+}
+
 :root[data-theme="dark"] {
 	--bg: #121216;
 	--surface: #1b1b21;
@@ -25,7 +40,8 @@
 }
 
 html,
-body {
+body,
+#app {
 	margin: 0;
 	height: 100%;
 	background: var(--bg);
@@ -67,4 +83,26 @@ button.danger {
 :focus-visible {
 	outline: 2px solid var(--accent);
 	outline-offset: 1px;
+}
+
+#app {
+	display: flex;
+	flex-direction: column;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
+
+@media (max-width: 900px) {
+	.svelte-flow__minimap {
+		display: none;
+	}
 }

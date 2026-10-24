@@ -79,5 +79,13 @@ export const pathTo = (nodes: readonly TreeNode[], tip: number | null): Set<numb
 	return path;
 };
 
-/** A stable, distinct hue per branch. */
-export const branchHue = (conversationId: number): number => (conversationId * 137.508) % 360;
+// Branch colors step around the hue wheel by the golden angle in branch order, so any few
+// branches look clearly different. Branch order is creation order, so a branch keeps its color.
+const order = new Map<number, number>();
+
+/** Record the branch order from each tree the client receives. */
+export const setBranchOrder = (ids: readonly number[]): void => {
+	ids.forEach((id, index) => order.set(id, index));
+};
+
+export const branchHue = (conversationId: number): number => (140 + (order.get(conversationId) ?? conversationId) * 137.508) % 360;

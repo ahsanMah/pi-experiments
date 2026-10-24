@@ -1,48 +1,39 @@
-// The branches application: one pi-durable Harness on SQLite, plus the operations clients
-// call (send, fork, share, ...) and the tree index they watch.
+// The branches application: one pi-durable Harness, plus the operations clients call
+// (send, fork, share, ...) and the tree index they watch. Free of Node APIs, so the same
+// code runs the server (server/main.ts) and the in-browser demo (web/src/demo.ts).
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
-import type { Model, Api } from "@earendil-works/pi-ai";
-import { builtinModels } from "@earendil-works/pi-ai/providers/all";
-import { fauxAssistantMessage, fauxProvider, type FauxResponseStep } from "@earendil-works/pi-ai/providers/faux";
-import { createRegistry, Harness, type ConversationId, type EntryId, type EntryRecord } from "@earendil-works/pi-durable";
-import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
-import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
-import { CodingTools } from "@earendil-works/pi-durable/tools";
+import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Models } from "@earendil-works/pi-ai/models";
+import {
+	createRegistry,
+	Harness,
+	type AgentChange,
+	type ConversationId,
+	type EntryId,
+	type EntryRecord,
+	type Extension,
+	type HarnessOptions,
+	type Storage,
+} from "@earendil-works/pi-durable";
 import type { SharedNote, ShareMode, TreeIndex } from "../shared/protocol.ts";
 import { BranchMetaDoc, createBranchesExtension, SHARED_ENTRY, SharedNotesDoc } from "./branches.ts";
 import { classify, textOf, TreeIndexer } from "./tree.ts";
 
 export type AppOptions = {
-	/** SQLite file; the whole tree of conversations lives in it. */
-	readonly database: string;
-	/** `provider/modelId`, or `faux/echo` for an offline stand-in that echoes. */
+	readonly storage: Storage;
+	readonly models: Models;
+	/** `provider/modelId` for new conversations. */
 	readonly model: string;
-	/** Working directory for the coding tools; off when undefined. */
-	readonly cwd?: string;
+	readonly thinkingLevel?: AgentChange["thinkingLevel"];
+	/** Extensions installed before the branches extension, such as pi-durable's coding tools. */
+	readonly extensions?: readonly Extension[];
+	readonly env?: HarnessOptions["env"];
 };
 
-const parseModel = (ref: string): { provider: string; modelId: string } => {
+export const parseModel = (ref: string): { provider: string; modelId: string } => {
 	const slash = ref.indexOf("/");
 	if (slash <= 0) throw new Error(`Model must be provider/modelId, got "${ref}"`);
 	return { provider: ref.slice(0, slash), modelId: ref.slice(slash + 1) };
-};
-
-/** An offline model that streams a short reply naming what it was asked, so branching works without a key. */
-const echoFaux = () => {
-	const faux = fauxProvider({ provider: "faux", models: [{ id: "echo" }], tokensPerSecond: 40 });
-	const step: FauxResponseStep = (context) => {
-		faux.appendResponses([step]);
-		const last = [...context.messages].reverse().find((message) => message.role === "user");
-		const asked = last === undefined ? "" : textOf(last.content as never);
-		const system = context.messages.filter((message) => message.role === "system").length;
-		return fauxAssistantMessage(
-			`(offline echo model) You said: "${asked.slice(0, 200)}". ` +
-				`I can see ${context.messages.length} messages of context${system > 0 ? " including system sections" : ""}. ` +
-				"Set PI_MODEL to a real provider/model to get real answers.",
-		);
-	};
-	faux.setResponses([step]);
-	return faux;
 };
 
 export class BranchesApp {
@@ -50,26 +41,26 @@ export class BranchesApp {
 	readonly indexer: TreeIndexer;
 	readonly defaultModel: string;
 	readonly availableModels: readonly string[];
-	readonly #models: ReturnType<typeof builtinModels>;
+	readonly #models: Models;
+	readonly #agent: AgentChange;
 	readonly #listeners = new Set<(tree: TreeIndex) => void>();
 	#tree: TreeIndex = { branches: [], nodes: [], notes: [] };
 	#rebuild: { timer?: ReturnType<typeof setTimeout>; running?: Promise<void>; again?: boolean } = {};
 
-	private constructor(harness: Harness, models: ReturnType<typeof builtinModels>, defaultModel: string, available: string[]) {
+	private constructor(harness: Harness, models: Models, defaultModel: string, agent: AgentChange, available: string[]) {
 		this.harness = harness;
 		this.indexer = new TreeIndexer(harness);
 		this.#models = models;
+		this.#agent = agent;
 		this.defaultModel = defaultModel;
 		this.availableModels = available;
 	}
 
 	static async open(options: AppOptions, context: Context = BACKGROUND_CONTEXT): Promise<BranchesApp> {
-		const models = builtinModels();
-		models.setProvider(echoFaux().provider);
-
+		const { models } = options;
 		let app: BranchesApp | undefined;
 		const registry = createRegistry();
-		if (options.cwd !== undefined) registry.install(CodingTools);
+		for (const extension of options.extensions ?? []) registry.install(extension);
 		registry.install(
 			createBranchesExtension({
 				harness: () => app!.harness,
@@ -79,14 +70,12 @@ export class BranchesApp {
 			}),
 		);
 
-		const storage = await openNodeSqliteStorage(options.database);
-		const cwd = options.cwd;
 		const harness = await Harness.open(
-			storage,
+			options.storage,
 			{
 				models,
 				registry,
-				...(cwd !== undefined ? { env: ({ cwd: agentCwd }) => new NodeExecutionEnv({ cwd: agentCwd ?? cwd }) } : {}),
+				...(options.env !== undefined ? { env: options.env } : {}),
 				conversationCreated: async (tx, conversation) => {
 					const meta = await tx.doc(BranchMetaDoc);
 					meta.branches[String(conversation.id)] ??= { title: "", createdAt: Date.now() };
@@ -96,8 +85,12 @@ export class BranchesApp {
 		);
 
 		const available = (await models.getAvailable()).map((model: Model<Api>) => `${model.provider}/${model.id}`);
-		app = new BranchesApp(harness, models, options.model, available);
-		await harness.root(context, { agent: { model: parseModel(options.model) } });
+		const agent: AgentChange = {
+			model: parseModel(options.model),
+			...(options.thinkingLevel !== undefined ? { thinkingLevel: options.thinkingLevel } : {}),
+		};
+		app = new BranchesApp(harness, models, options.model, agent, available);
+		await harness.root(context, { agent });
 		harness.resume();
 
 		// Tasks starting and ending cover every model turn and tool call; client operations schedule their own rebuild.
@@ -187,7 +180,7 @@ export class BranchesApp {
 
 	async create(title: string | undefined, context: Context): Promise<ConversationId> {
 		const conversation = await this.harness.createConversation(
-			{ ownership: { kind: "ownerless" }, agent: { model: parseModel(this.defaultModel) } },
+			{ ownership: { kind: "ownerless" }, agent: this.#agent },
 			context,
 		);
 		await this.#setTitle(conversation.id, title?.trim() || `Thread ${conversation.id}`, context);

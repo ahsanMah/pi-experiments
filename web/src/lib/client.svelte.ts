@@ -3,9 +3,21 @@
 // commit's Chord ops (the same `applyImmutable` pi-durable's watches are built on).
 import { applyImmutable } from "@earendil-works/chord/delta";
 import type { ClientMessage, ServerMessage, TreeIndex } from "../../../shared/protocol.ts";
+import { setBranchOrder } from "./layout.ts";
 import type { ConversationView } from "./view.ts";
 
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void };
+
+/** The part of WebSocket the client uses, so the demo can swap in an in-page server. */
+export type SocketLike = {
+	readonly readyState: number;
+	send(data: string): void;
+	onopen: (() => void) | null;
+	onclose: (() => void) | null;
+	onmessage: ((event: { data: unknown }) => void) | null;
+};
+
+const OPEN = 1;
 
 export class BranchesClient {
 	tree = $state<TreeIndex>({ branches: [], nodes: [], notes: [] });
@@ -15,19 +27,19 @@ export class BranchesClient {
 	connected = $state(false);
 	errors = $state<string[]>([]);
 
-	#socket: WebSocket | undefined;
+	#socket: SocketLike | undefined;
 	#pending = new Map<string, Pending>();
 	#subscribed = new Set<number>();
 	#nextId = 0;
-	#url: string;
+	#open: () => SocketLike;
 
-	constructor(url: string) {
-		this.#url = url;
+	constructor(open: () => SocketLike) {
+		this.#open = open;
 		this.#connect();
 	}
 
 	#connect(): void {
-		const socket = new WebSocket(this.#url);
+		const socket = this.#open();
 		this.#socket = socket;
 		socket.onopen = () => {
 			this.connected = true;
@@ -50,6 +62,7 @@ export class BranchesClient {
 				this.defaultModel = message.defaultModel;
 				break;
 			case "tree":
+				setBranchOrder(message.tree.branches.map((branch) => branch.id));
 				this.tree = message.tree;
 				break;
 			case "view":
@@ -83,14 +96,14 @@ export class BranchesClient {
 	}
 
 	#send(message: ClientMessage): void {
-		if (this.#socket?.readyState === WebSocket.OPEN) this.#socket.send(JSON.stringify(message));
+		if (this.#socket?.readyState === OPEN) this.#socket.send(JSON.stringify(message));
 	}
 
 	request<T = unknown>(message: ClientMessage): Promise<T> {
 		const requestId = String(++this.#nextId);
 		return new Promise<T>((resolve, reject) => {
 			this.#pending.set(requestId, { resolve: resolve as (value: unknown) => void, reject });
-			if (this.#socket?.readyState !== WebSocket.OPEN) {
+			if (this.#socket?.readyState !== OPEN) {
 				this.#pending.delete(requestId);
 				reject(new Error("Not connected"));
 				return;

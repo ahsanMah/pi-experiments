@@ -1,25 +1,74 @@
 // HTTP + WebSocket entry point. Serves the built web client from web/dist and the
 // branches protocol on /ws. Every client (web canvas, terminal) talks to this one
 // process, which owns the SQLite storage.
+//
+// Models come from your pi coding agent setup: ~/.pi/agent/auth.json (API keys and /login
+// subscriptions), models.json (custom providers), and settings.json (default model and
+// thinking level), through the coding agent's own ModelRuntime. Environment API keys work
+// too. Set PI_BRANCHES_PI_CONFIG=0 to ignore the pi setup and use environment keys only.
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, resolve } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { ConversationId, ConversationWatch, EntryId } from "@earendil-works/pi-durable";
+import type { Models } from "@earendil-works/pi-ai/models";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import type { AgentChange } from "@earendil-works/pi-durable";
+import { NodeExecutionEnv } from "@earendil-works/pi-durable/env/node";
+import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
+import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
 import { BranchesApp } from "./app.ts";
+import { connect } from "./connection.ts";
+import { echoProvider } from "./echo.ts";
 
 const port = Number(process.env.PORT ?? 8787);
 // No authentication, so only local clients by default.
 const host = process.env.HOST ?? "127.0.0.1";
 const database = process.env.PI_BRANCHES_DB ?? "./branches.sqlite";
-const model = process.env.PI_MODEL ?? "faux/echo";
 const cwd = process.env.PI_BRANCHES_CWD;
+const usePiConfig = process.env.PI_BRANCHES_PI_CONFIG !== "0";
 const webRoot = resolve(import.meta.dirname, "../web/dist");
-
 const context = BACKGROUND_CONTEXT;
-const app = await BranchesApp.open({ database, model, ...(cwd !== undefined ? { cwd } : {}) }, context);
+
+type ModelSetup = { models: Models; model: string; thinkingLevel?: AgentChange["thinkingLevel"]; source: string };
+
+const loadModels = async (): Promise<ModelSetup> => {
+	const echo = echoProvider({ tokensPerSecond: 40, hint: "Set PI_MODEL, or a default model in pi, to get real answers." }).provider;
+	if (usePiConfig) {
+		const { ModelRuntime, SettingsManager, getAgentDir } = await import("@earendil-works/pi-coding-agent");
+		const models = await ModelRuntime.create();
+		models.registerNativeProvider(echo);
+		const settings = SettingsManager.create(process.cwd());
+		const provider = settings.getDefaultProvider();
+		const modelId = settings.getDefaultModel();
+		const fromSettings = provider !== undefined && modelId !== undefined ? `${provider}/${modelId}` : undefined;
+		const thinkingLevel = settings.getDefaultThinkingLevel() as AgentChange["thinkingLevel"] | undefined;
+		return {
+			models,
+			model: process.env.PI_MODEL ?? fromSettings ?? "faux/echo",
+			...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+			source: `pi settings in ${getAgentDir()}`,
+		};
+	}
+	const models = builtinModels();
+	models.setProvider(echo);
+	return { models, model: process.env.PI_MODEL ?? "faux/echo", source: "environment API keys" };
+};
+
+const setup = await loadModels();
+const app = await BranchesApp.open(
+	{
+		storage: await openNodeSqliteStorage(database),
+		models: setup.models,
+		model: setup.model,
+		...(setup.thinkingLevel !== undefined ? { thinkingLevel: setup.thinkingLevel } : {}),
+		...(cwd !== undefined
+			? { extensions: [CodingTools], env: ({ cwd: agentCwd }) => new NodeExecutionEnv({ cwd: agentCwd ?? cwd }) }
+			: {}),
+	},
+	context,
+);
 
 const MIME: Record<string, string> = {
 	".html": "text/html; charset=utf-8",
@@ -45,115 +94,28 @@ const server = createServer((request, response) => {
 const wss = new WebSocketServer({ server, path: "/ws" });
 
 wss.on("connection", (socket: WebSocket) => {
-	const watches = new Map<ConversationId, ConversationWatch>();
-	const send = (message: ServerMessage) => {
-		if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
-	};
-
-	send({ t: "hello", models: app.availableModels, defaultModel: app.defaultModel });
-	send({ t: "tree", tree: app.tree });
-	const offTree = app.onTree((tree) => send({ t: "tree", tree }));
-
-	const subscribe = async (id: ConversationId) => {
-		if (watches.has(id)) {
-			send({ t: "view", conversationId: id, value: watches.get(id)!.value });
-			return;
-		}
-		const conversation = await app.harness.conversation(id, context);
-		if (conversation === undefined) throw new Error(`No branch ${id}`);
-		const watch = await conversation.watch(context);
-		watches.set(id, watch);
-		send({ t: "view", conversationId: id, value: watch.value });
-		watch.start(async (_value, ops) => {
-			// A watch replaced by an unsubscribe and resubscribe must not interleave its frames with the new one's.
-			if (watches.get(id) === watch) send({ t: "ops", conversationId: id, ops });
-		});
-	};
-
-	const unsubscribe = async (id: ConversationId) => {
-		const watch = watches.get(id);
-		watches.delete(id);
-		await watch?.stop();
-	};
-
-	const handle = async (message: ClientMessage): Promise<unknown> => {
-		switch (message.t) {
-			case "subscribe":
-				return subscribe(message.conversationId as ConversationId);
-			case "unsubscribe":
-				return unsubscribe(message.conversationId as ConversationId);
-			case "send":
-				return app.send(message.conversationId as ConversationId, message.text, message.whenBusy ?? "followUp", context);
-			case "abort":
-				return app.abort(message.conversationId as ConversationId, context);
-			case "fork":
-				return {
-					conversationId: await app.fork(
-						message.conversationId as ConversationId,
-						message.at as EntryId,
-						message.title,
-						context,
-					),
-				};
-			case "new":
-				return { conversationId: await app.create(message.title, context) };
-			case "rename":
-				return app.rename(message.conversationId as ConversationId, message.title, context);
-			case "configure":
-				return app.configure(message.conversationId as ConversationId, message.model, context);
-			case "share": {
-				const note = await app.share(
-					{
-						mode: message.mode,
-						to: message.to as readonly ConversationId[] | "*",
-						...(message.from !== undefined
-							? {
-									from: {
-										conversationId: message.from.conversationId as ConversationId,
-										...(message.from.at !== undefined ? { at: message.from.at as EntryId } : {}),
-									},
-								}
-							: {}),
-						...(message.title !== undefined ? { title: message.title } : {}),
-						...(message.text !== undefined ? { text: message.text } : {}),
-					},
-					context,
-				);
-				return { noteId: note.id };
-			}
-			case "unshare":
-				return app.removeNote(message.noteId, context);
-		}
-	};
-
-	socket.on("message", async (raw) => {
+	const connection = connect(
+		app,
+		(message: ServerMessage) => {
+			if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
+		},
+		context,
+	);
+	socket.on("message", (raw) => {
 		let message: ClientMessage;
 		try {
 			message = JSON.parse(String(raw)) as ClientMessage;
 		} catch {
-			send({ t: "error", message: "Malformed message" });
+			socket.send(JSON.stringify({ t: "error", message: "Malformed message" } satisfies ServerMessage));
 			return;
 		}
-		try {
-			const result = await handle(message);
-			if (message.requestId !== undefined) send({ t: "ack", requestId: message.requestId, result });
-		} catch (error) {
-			send({
-				t: "error",
-				...(message.requestId !== undefined ? { requestId: message.requestId } : {}),
-				message: error instanceof Error ? error.message : String(error),
-			});
-		}
+		void connection.receive(message);
 	});
-
-	socket.on("close", () => {
-		offTree();
-		for (const id of [...watches.keys()]) void unsubscribe(id);
-	});
+	socket.on("close", () => connection.close());
 });
 
 server.listen(port, host, () => {
-	console.log(`pi-branches on http://${host}:${port} (model ${model}, storage ${database})`);
+	console.log(`pi-branches on http://${host}:${port} (model ${setup.model} from ${setup.source}, storage ${database})`);
 });
 
 const shutdown = async () => {

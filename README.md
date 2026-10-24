@@ -19,15 +19,18 @@ npm run build                     # web client into web/dist
 PI_MODEL=anthropic/claude-sonnet-5-5 npm run server   # http://localhost:8787
 ```
 
-Without `PI_MODEL` the server uses `faux/echo`, an offline model that echoes, so everything works without a key. Provider keys come from the usual environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …), and the model picker in each branch lists every model whose provider has credentials.
+The server uses your pi coding agent setup: credentials from `~/.pi/agent/auth.json` (API keys and `/login` subscriptions), custom providers from `models.json`, and the default model and thinking level from `settings.json`. It loads them through the coding agent's own `ModelRuntime`, so every model you can pick in `pi` is in each branch's model picker. `PI_CODING_AGENT_DIR` points it at another agent directory, `PI_MODEL` overrides the default, and environment keys (`ANTHROPIC_API_KEY`, …) work too. With no default model anywhere, it uses `faux/echo`, an offline model that echoes, so everything works without a key.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PI_MODEL` | `faux/echo` | Model for new conversations, `provider/modelId` |
+| `PI_MODEL` | pi's default model, else `faux/echo` | Model for new conversations, `provider/modelId` |
+| `PI_BRANCHES_PI_CONFIG` | `1` | `0` ignores the pi setup and uses environment keys only |
 | `PI_BRANCHES_DB` | `./branches.sqlite` | SQLite file holding the whole tree |
 | `PI_BRANCHES_CWD` | unset | Enables pi-durable's coding tools (read, write, edit, bash) in this directory |
 | `PORT` | `8787` | HTTP and WebSocket port |
 | `HOST` | `127.0.0.1` | Interface to listen on |
+
+`npm run build:demo` builds `web/dist-demo/pi-branches-demo.html`, a single page that runs the server in the browser with the echo model and a seeded tree. Nothing is saved.
 
 For web development, run `npm run server` and `npm run web` (Vite on :5173, proxying `/ws`). Run the terminal client with `npm run tui`.
 

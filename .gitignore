@@ -3,3 +3,4 @@ web/dist/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+web/dist-demo/

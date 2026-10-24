@@ -5,9 +5,9 @@
 	import Chat from "./components/Chat.svelte";
 	import ShareDialog, { type ShareRequest } from "./components/ShareDialog.svelte";
 	import Sidebar from "./components/Sidebar.svelte";
-	import { BranchesClient } from "./lib/client.svelte.ts";
+	import type { BranchesClient } from "./lib/client.svelte.ts";
 
-	const client = new BranchesClient(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+	let { client, demo = false }: { client: BranchesClient; demo?: boolean } = $props();
 
 	const fromHash = () => {
 		const match = /b=(\d+)/.exec(location.hash);
@@ -18,18 +18,32 @@
 	let drafts = $state<Record<number, string>>({});
 	let shareRequest = $state<ShareRequest | undefined>();
 	type OverviewMode = "side" | "full" | "hidden";
-	let overview = $state<OverviewMode>((localStorage.getItem("overview") as OverviewMode | null) ?? "side");
-	let panelWidth = $state(Number(localStorage.getItem("panelWidth") ?? 460));
-	let dark = $state(matchMedia("(prefers-color-scheme: dark)").matches);
-
+	// Layout preferences are per-viewer conveniences; storage may be unavailable (private windows, sandboxes).
+	const stored = (key: string): string | null => {
+		try {
+			return localStorage.getItem(key);
+		} catch {
+			return null;
+		}
+	};
+	let overview = $state<OverviewMode>((stored("overview") as OverviewMode | null) ?? "side");
+	let panelWidth = $state(Number(stored("panelWidth") ?? 460));
+	// Follow an explicit data-theme on the root (set by a host page), else the system setting.
+	const query = matchMedia("(prefers-color-scheme: dark)");
+	const readTheme = () => {
+		const explicit = document.documentElement.dataset.theme;
+		return explicit === "dark" || (explicit !== "light" && query.matches);
+	};
+	let dark = $state(readTheme());
 	$effect(() => {
-		const query = matchMedia("(prefers-color-scheme: dark)");
-		const update = () => (dark = query.matches);
+		const update = () => (dark = readTheme());
 		query.addEventListener("change", update);
-		return () => query.removeEventListener("change", update);
-	});
-	$effect(() => {
-		document.documentElement.dataset.theme = dark ? "dark" : "light";
+		const observer = new MutationObserver(update);
+		observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+		return () => {
+			query.removeEventListener("change", update);
+			observer.disconnect();
+		};
 	});
 	$effect(() => {
 		try {
@@ -46,7 +60,11 @@
 		}
 	});
 	$effect(() => {
-		if (activeId !== undefined) history.replaceState(null, "", `#b=${activeId}`);
+		try {
+			if (activeId !== undefined) history.replaceState(null, "", `#b=${activeId}`);
+		} catch {
+			// Sandboxed frames may refuse URL changes; the open branch just isn't kept in the URL.
+		}
 		client.watch(activeId === undefined ? [] : [activeId]);
 	});
 
@@ -115,6 +133,13 @@
 
 <svelte:window onkeydown={onKey} />
 
+{#if demo}
+	<div class="demo-banner">
+		Demo: the branches server runs inside this page with an offline echo model, and nothing is saved.
+		<a href="https://github.com/ahsanMah/pi-experiments" target="_blank" rel="noreferrer noopener">Run it with real models</a>
+	</div>
+{/if}
+
 <div class="app" class:full={overview === "full"} class:hidden={overview === "hidden"} style="--panel: {panelWidth}px">
 	<div class="sidebar">
 		<Sidebar
@@ -132,6 +157,16 @@
 	</div>
 
 	<main class="main">
+		{#if client.tree.branches.length > 1}
+			<label class="mobile-branches">
+				<span>Branch</span>
+				<select id="mobile-branch" value={activeId} onchange={(e) => open(Number(e.currentTarget.value))}>
+					{#each client.tree.branches as branch (branch.id)}
+						<option value={branch.id}>{branch.busy ? "● " : ""}{branch.title}</option>
+					{/each}
+				</select>
+			</label>
+		{/if}
 		{#if active}
 			{#key active.id}
 				<Chat
@@ -208,8 +243,35 @@
 	.app {
 		display: grid;
 		grid-template-columns: 240px minmax(0, 1fr) 6px var(--panel);
-		height: 100vh;
+		flex: 1;
+		min-height: 0;
 		overflow: hidden;
+	}
+	.main {
+		display: flex;
+		flex-direction: column;
+	}
+	.main > :global(.chat) {
+		flex: 1;
+		min-height: 0;
+	}
+	.mobile-branches {
+		display: none;
+	}
+	.demo-banner {
+		height: 34px;
+		box-sizing: border-box;
+		padding: 7px 16px;
+		font-size: 13px;
+		background: var(--accent-soft);
+		border-bottom: 1px solid var(--border);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.demo-banner a {
+		color: var(--accent);
+		margin-left: 6px;
 	}
 	.app.hidden {
 		grid-template-columns: 240px minmax(0, 1fr) 0 0;
@@ -297,6 +359,19 @@
 		.sidebar,
 		.resizer {
 			display: none;
+		}
+		.mobile-branches {
+			display: flex;
+			align-items: center;
+			gap: 8px;
+			padding: 8px max(16px, env(safe-area-inset-left, 0px));
+			border-bottom: 1px solid var(--border);
+			font-size: 12px;
+			color: var(--text-muted);
+		}
+		.mobile-branches select {
+			flex: 1;
+			min-width: 0;
 		}
 		.app.full {
 			grid-template-columns: minmax(0, 1fr);
