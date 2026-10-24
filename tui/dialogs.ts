@@ -4,12 +4,13 @@ import {
 	type Focusable,
 	Input,
 	Key,
+	Markdown,
 	matchesKey,
 	type SelectItem,
 	SelectList,
 	type TUI,
 } from "@earendil-works/pi-tui";
-import { fill, selectListTheme, style } from "./theme.ts";
+import { fill, markdownTheme, selectListTheme, style } from "./theme.ts";
 
 const frame = (title: string, body: string[], hint: string, width: number): string[] => {
 	const border = style.dim("─".repeat(Math.max(1, width)));
@@ -95,4 +96,67 @@ export const pick = (tui: TUI, title: string, items: SelectItem[]): Promise<stri
 			resolve(value);
 		});
 		const handle = tui.showOverlay(dialog, { width: "70%", minWidth: 40, anchor: "center" });
+	});
+
+const READER_LINES = 18;
+
+/** Markdown text with a heading line, scrolled with the arrow keys; actions are single keys. */
+class ReaderDialog implements Component {
+	readonly #title: string;
+	readonly #meta: string;
+	readonly #body: Markdown;
+	readonly #actions: readonly { key: string; label: string }[];
+	readonly #done: (action: string | undefined) => void;
+	#top = 0;
+	#lines = 0;
+
+	constructor(title: string, meta: string, text: string, actions: readonly { key: string; label: string }[], done: (action: string | undefined) => void) {
+		this.#title = title;
+		this.#meta = meta;
+		this.#body = new Markdown(text, 1, 0, markdownTheme);
+		this.#actions = actions;
+		this.#done = done;
+	}
+
+	render(width: number): string[] {
+		const lines = this.#body.render(width);
+		this.#lines = lines.length;
+		this.#top = Math.max(0, Math.min(this.#top, lines.length - READER_LINES));
+		const shown = lines.slice(this.#top, this.#top + READER_LINES);
+		const more = lines.length > READER_LINES ? ` · ${this.#top + 1}–${this.#top + shown.length} of ${lines.length} lines, ↑↓ scroll` : "";
+		const keys = [...this.#actions.map((action) => `${action.key} ${action.label}`), "esc back"].join(" · ");
+		return frame(this.#title, [style.dim(` ${this.#meta}`), "", ...shown], keys + more, width);
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, Key.escape) || data === "q") this.#done(undefined);
+		else if (matchesKey(data, Key.up)) this.#top = Math.max(0, this.#top - 1);
+		else if (matchesKey(data, Key.down)) this.#top = Math.min(Math.max(0, this.#lines - READER_LINES), this.#top + 1);
+		else if (matchesKey(data, Key.pageUp)) this.#top = Math.max(0, this.#top - READER_LINES);
+		else if (matchesKey(data, Key.pageDown)) this.#top = Math.min(Math.max(0, this.#lines - READER_LINES), this.#top + READER_LINES);
+		else {
+			const action = this.#actions.find((a) => a.key === data);
+			if (action !== undefined) this.#done(action.key);
+		}
+	}
+
+	invalidate(): void {
+		this.#body.invalidate();
+	}
+}
+
+/** Show text to read; resolves with the action key pressed, or undefined on escape. */
+export const read = (
+	tui: TUI,
+	title: string,
+	meta: string,
+	text: string,
+	actions: readonly { key: string; label: string }[] = [],
+): Promise<string | undefined> =>
+	new Promise((resolve) => {
+		const dialog = new ReaderDialog(title, meta, text, actions, (action) => {
+			handle.hide();
+			resolve(action);
+		});
+		const handle = tui.showOverlay(dialog, { width: "80%", minWidth: 40, anchor: "center" });
 	});

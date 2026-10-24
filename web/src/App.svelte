@@ -175,6 +175,10 @@
 					branch={active}
 					view={client.views[active.id]}
 					nodes={client.tree.nodes}
+					notes={client.tree.notes}
+					branches={client.tree.branches}
+					openBranch={(id, entry) => open(id, entry)}
+					unshare={(noteId) => void client.request({ t: "unshare", noteId })}
 					models={client.models}
 					{focusId}
 					bind:draft={() => drafts[active.id] ?? "", (value) => (drafts[active.id] = value)}
