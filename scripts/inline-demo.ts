@@ -11,7 +11,10 @@ const css = files.filter((file) => file.endsWith(".css"));
 if (js.length !== 1) throw new Error(`expected one script in the demo build, found ${js.join(", ")}`);
 
 // `</script` inside the bundle would end the inline script early.
-const script = readFileSync(join(assets, js[0]!), "utf8").replace(/<\/script/gi, "<\\/script");
+const script = readFileSync(join(assets, js[0]!), "utf8")
+	.replace(/<\/script/gi, "<\\/script")
+	// Libraries use a literal U+FFFD (for example marked's entity decoding); escape it so hosts don't take it for corruption.
+	.replace(/\uFFFD/g, "\\uFFFD");
 const styles = css.map((file) => readFileSync(join(assets, file), "utf8")).join("\n");
 const html = readFileSync(join(dir, "index.html"), "utf8")
 	.replace(/\s*<script type="module"[^>]*><\/script>/, "")
