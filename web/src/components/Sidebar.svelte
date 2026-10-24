@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { BranchInfo, SharedNote, TreeIndex } from "../../../shared/protocol.ts";
 	import { branchHue } from "../lib/layout.ts";
+	import NoteCard from "./NoteCard.svelte";
 
 	type Props = {
 		tree: TreeIndex;
@@ -74,8 +75,7 @@
 						<span class="note-title">{note.title}</span>
 						<span class="meta">{note.author === "model" ? "by a model" : "by you"} → {targetLabel(note)}</span>
 					</summary>
-					<div class="note-text">{note.text}</div>
-					<button class="danger" onclick={() => unshare(note.id)}>Unshare</button>
+					<NoteCard {note} branches={tree.branches} openBranch={(id) => select(id)} {unshare} />
 				</details>
 			</li>
 		{/each}
@@ -185,11 +185,5 @@
 		display: block;
 		color: var(--text-muted);
 		font-size: 11px;
-	}
-	.note-text {
-		white-space: pre-wrap;
-		max-height: 240px;
-		overflow: auto;
-		margin: 6px 0;
 	}
 </style>

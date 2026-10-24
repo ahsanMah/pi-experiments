@@ -1,5 +1,7 @@
 <script lang="ts">
+	import type { BranchInfo, SharedNote } from "../../../shared/protocol.ts";
 	import { renderMarkdown } from "../lib/markdown.ts";
+	import NoteCard from "./NoteCard.svelte";
 	import { textOf, type ContentBlock, type ViewEntry } from "../lib/view.ts";
 
 	type Props = {
@@ -13,15 +15,19 @@
 		branch: () => void;
 		editBranch?: () => void;
 		share: () => void;
+		notes: readonly SharedNote[];
+		branches: readonly BranchInfo[];
+		openBranch: (id: number, entry: number | null) => void;
 	};
-	let { entry, results, inherited, focused, actions, branch, editBranch, share }: Props = $props();
+	let { entry, results, inherited, focused, actions, branch, editBranch, share, notes, branches, openBranch }: Props = $props();
 
 	const message = $derived(entry.model?.[0]);
 	const blocks = $derived<ContentBlock[]>(
 		message === undefined ? [] : typeof message.content === "string" ? [{ type: "text", text: message.content }] : ((message.content as ContentBlock[]) ?? []),
 	);
 	const text = $derived(textOf(blocks));
-	const sharedTitle = $derived((entry.data as { title?: string } | undefined)?.title ?? "context");
+	const shared = $derived(entry.data as { noteId?: string; title?: string } | undefined);
+	const sharedNote = $derived(notes.find((note) => note.id === shared?.noteId));
 </script>
 
 {#if entry.kind === "pi.user"}
@@ -63,7 +69,14 @@
 		{/if}
 	</div>
 {:else if entry.kind === "branches.shared"}
-	<div class="row marker" class:inherited data-entry={entry.id}>⇄ Shared into this branch: <strong>{sharedTitle}</strong></div>
+	<details class="row shared" class:inherited class:focused open={focused} data-entry={entry.id}>
+		<summary>⇄ Shared into this branch: <strong>{shared?.title ?? "context"}</strong>{sharedNote ? "" : " (unshared)"}</summary>
+		{#if sharedNote}
+			<NoteCard note={sharedNote} {branches} {openBranch} />
+		{:else}
+			<p class="gone">This note was unshared, so the model no longer sees it.</p>
+		{/if}
+	</details>
 {:else if entry.kind === "pi.compaction"}
 	<div class="row marker" data-entry={entry.id}>Earlier context was compacted into a summary.</div>
 {:else if entry.kind === "pi.reset"}
@@ -148,6 +161,23 @@
 	}
 	.thinking div {
 		white-space: pre-wrap;
+		color: var(--text-muted);
+	}
+	.shared {
+		border: 1px dashed var(--border);
+		border-radius: 10px;
+		padding: 6px 12px;
+		font-size: 13px;
+	}
+	.shared summary {
+		white-space: normal;
+		color: var(--text-muted);
+	}
+	.shared[open] summary {
+		margin-bottom: 6px;
+	}
+	.gone {
+		margin: 0;
 		color: var(--text-muted);
 	}
 	.marker {
