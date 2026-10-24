@@ -63,7 +63,8 @@ wss.on("connection", (socket: WebSocket) => {
 		watches.set(id, watch);
 		send({ t: "view", conversationId: id, value: watch.value });
 		watch.start(async (_value, ops) => {
-			send({ t: "ops", conversationId: id, ops });
+			// A watch replaced by an unsubscribe and resubscribe must not interleave its frames with the new one's.
+			if (watches.get(id) === watch) send({ t: "ops", conversationId: id, ops });
 		});
 	};
 

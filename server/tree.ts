@@ -195,7 +195,7 @@ export class TreeIndexer {
 			);
 			branches.push({
 				id: record.id,
-				title: meta[String(record.id)]?.title ?? (record.parent === undefined ? "Main" : `Branch ${record.id}`),
+				title: meta[String(record.id)]?.title || (branches.length === 0 ? "Main" : `Branch ${branches.length}`),
 				...(record.parent !== undefined ? { parent: record.parent } : {}),
 				busy: live?.run !== undefined,
 				queued: inbox?.items.length ?? 0,
