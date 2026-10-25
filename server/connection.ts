@@ -103,6 +103,10 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 			}
 			case "unshare":
 				return app.removeNote(message.noteId, context);
+			case "acceptSuggestion":
+				return app.acceptSuggestion(message.id, context);
+			case "dismissSuggestion":
+				return app.dismissSuggestion(message.id, context);
 			case "text":
 				return { text: await app.entryText(message.conversationId as ConversationId, message.entryId as EntryId, context) };
 		}

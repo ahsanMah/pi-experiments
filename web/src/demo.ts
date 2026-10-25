@@ -48,6 +48,8 @@ const seed = async (app: BranchesApp) => {
 
 	await app.rebuildNow(context);
 	await app.share({ mode: "summary", to: "*", from: { conversationId: main }, title: 'Summary of "Main"' }, context);
+	// A suggestion the model made with suggest_branch, waiting for the user to open or dismiss it.
+	await ask(app, main, "Suggest a branch about rollback plans");
 	for (const id of [main, wal, duck]) await app.configure(id, LIVE, context);
 	await app.rebuildNow(context);
 };

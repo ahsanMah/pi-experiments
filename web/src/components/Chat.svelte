@@ -1,15 +1,24 @@
 <script lang="ts">
 	import { tick } from "svelte";
-	import type { BranchInfo, TreeNode } from "../../../shared/protocol.ts";
+	import type { BranchInfo, BranchSuggestion, SharedNote, TreeNode } from "../../../shared/protocol.ts";
 	import { branchHue } from "../lib/layout.ts";
 	import { renderMarkdown } from "../lib/markdown.ts";
 	import { textOf, type ConversationView, type ViewEntry } from "../lib/view.ts";
 	import Message from "./Message.svelte";
+	import NoteCard from "./NoteCard.svelte";
+	import SuggestionCard from "./SuggestionCard.svelte";
 
 	type Props = {
 		branch: BranchInfo;
 		view: ConversationView | undefined;
 		nodes: readonly TreeNode[];
+		notes: readonly SharedNote[];
+		branches: readonly BranchInfo[];
+		openBranch: (id: number, entry: number | null) => void;
+		unshare: (noteId: string) => void;
+		suggestions: readonly BranchSuggestion[];
+		accept: (id: string) => Promise<void>;
+		dismiss: (id: string) => void;
 		models: readonly string[];
 		focusId: number | null;
 		draft: string;
@@ -21,7 +30,7 @@
 		rename: (title: string) => void;
 		configure: (model: string) => void;
 	};
-	let { branch, view, nodes, models, focusId, draft = $bindable(), send, abort, branchAfter, editBranch, share, rename, configure }: Props = $props();
+	let { branch, view, nodes, notes, branches, openBranch, unshare, suggestions, accept, dismiss, models, focusId, draft = $bindable(), send, abort, branchAfter, editBranch, share, rename, configure }: Props = $props();
 
 	let scroller: HTMLElement | undefined = $state();
 	let input: HTMLTextAreaElement | undefined = $state();
@@ -86,6 +95,10 @@
 		}
 	};
 
+	// The notes this branch's model sees, as the server renders them into its system prompt.
+	const seen = $derived(notes.filter((note) => note.to === "*" || note.to.includes(branch.id)));
+	let showNotes = $state(false);
+
 	let editingTitle = $state(false);
 	let titleDraft = $state("");
 </script>
@@ -110,15 +123,31 @@
 		{:else}
 			<button class="title" title="Rename" onclick={() => ((titleDraft = branch.title), (editingTitle = true))}>{branch.title}</button>
 		{/if}
-		{#if branch.parent}<span class="muted">forked from #{branch.parent.conversationId}</span>{/if}
+		{#if branch.parent}<span class="muted">forked from {branches.find((b) => b.id === branch.parent?.conversationId)?.title ?? "another branch"}</span>{/if}
 		<span class="spacer"></span>
-		{#if branch.sharedIn > 0}<span class="pill" title="Shared notes this branch's model sees">⇄ {branch.sharedIn}</span>{/if}
+		{#if seen.length > 0}
+			<button class="pill" aria-expanded={showNotes} onclick={() => (showNotes = !showNotes)} title="Show the shared notes this branch's model sees">
+				⇄ {seen.length} shared
+			</button>
+		{/if}
 		{#if branch.costUsd > 0}<span class="muted">${branch.costUsd.toFixed(4)}</span>{/if}
 		<select value={branch.model ?? ""} onchange={(e) => configure(e.currentTarget.value)} title="Model for this branch">
 			{#if branch.model && !models.includes(branch.model)}<option value={branch.model}>{branch.model}</option>{/if}
 			{#each models as model (model)}<option value={model}>{model}</option>{/each}
 		</select>
 	</header>
+
+	{#if showNotes && seen.length > 0}
+		<div class="notes-panel">
+			<p class="notes-intro">This branch's model sees these notes in its system prompt, from its next reply on.</p>
+			{#each seen as note (note.id)}
+				<details open={seen.length === 1}>
+					<summary>{note.title}</summary>
+					<NoteCard {note} {branches} {openBranch} {unshare} />
+				</details>
+			{/each}
+		</div>
+	{/if}
 
 	<div class="scroller" bind:this={scroller} onscroll={onScroll}>
 		<div class="messages">
@@ -137,10 +166,16 @@
 					branch={() => branchAfter(entry.id)}
 					editBranch={node?.role === "user" && node.before !== undefined ? () => editBranch(node) : undefined}
 					share={() => share(entry.id)}
+					{notes}
+					{branches}
+					{openBranch}
 				/>
 				{#if forkAt !== undefined && entry.id === forkAt}
 					<div class="fork-line"><span>branch “{branch.title}” starts here</span></div>
 				{/if}
+			{/each}
+			{#each suggestions.filter((s) => s.conversationId === branch.id) as suggestion (suggestion.id)}
+				<div class="suggested"><SuggestionCard {suggestion} {branches} {accept} {dismiss} /></div>
 			{/each}
 			{#if branch.busy}
 				<div class="live">
@@ -235,10 +270,43 @@
 	}
 	.pill {
 		font-size: 12px;
-		padding: 1px 8px;
+		padding: 1px 10px;
+		border: 1px solid transparent;
 		border-radius: 999px;
 		background: var(--accent-soft);
 		white-space: nowrap;
+	}
+	.pill[aria-expanded="true"] {
+		border-color: var(--accent);
+	}
+	.notes-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		max-height: 45%;
+		overflow-y: auto;
+		padding: 10px 16px;
+		border-bottom: 1px solid var(--border);
+		background: var(--surface-muted);
+	}
+	.notes-intro {
+		margin: 0;
+		font-size: 12px;
+		color: var(--text-muted);
+	}
+	.notes-panel details {
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 10px;
+		padding: 6px 12px;
+	}
+	.notes-panel summary {
+		cursor: pointer;
+		font-weight: 600;
+		font-size: 13px;
+	}
+	.notes-panel details[open] summary {
+		margin-bottom: 6px;
 	}
 	select {
 		max-width: 220px;
@@ -256,6 +324,9 @@
 		color: var(--text-muted);
 		text-align: center;
 		margin-top: 20vh;
+	}
+	.suggested {
+		margin: 12px 0;
 	}
 	.fork-line {
 		display: flex;

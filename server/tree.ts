@@ -9,7 +9,7 @@ import type { Context } from "@earendil-works/chord/context";
 import { InboxDoc, LiveDoc, UsageDoc } from "@earendil-works/pi-durable";
 import type { ConversationId, ConversationRecord, Cursor, EntryId, EntryRecord, Harness } from "@earendil-works/pi-durable";
 import type { BranchInfo, NodeRole, TreeIndex, TreeNode } from "../shared/protocol.ts";
-import { BranchMetaDoc, notesFor, SHARED_ENTRY, SharedNotesDoc } from "./branches.ts";
+import { BranchMetaDoc, notesFor, SHARED_ENTRY, SharedNotesDoc, SuggestionsDoc } from "./branches.ts";
 
 const PREVIEW_CHARS = 160;
 const PAGE = 500;
@@ -139,6 +139,7 @@ export class TreeIndexer {
 		const records = await this.conversations(context);
 		const meta = (await this.#harness.snapshot(BranchMetaDoc, context))?.branches ?? {};
 		const board = (await this.#harness.snapshot(SharedNotesDoc, context))?.notes ?? [];
+		const suggestions = (await this.#harness.snapshot(SuggestionsDoc, context))?.suggestions ?? [];
 
 		// Parents sort before their forks: a fork's id is minted after its parent exists.
 		const caches: ConversationCache[] = [];
@@ -205,6 +206,6 @@ export class TreeIndexer {
 				sharedIn: notesFor(board, record.id).length,
 			});
 		}
-		return { branches, nodes, notes: board };
+		return { branches, nodes, notes: board, suggestions };
 	}
 }

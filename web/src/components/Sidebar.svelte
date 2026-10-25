@@ -1,6 +1,8 @@
 <script lang="ts">
 	import type { BranchInfo, SharedNote, TreeIndex } from "../../../shared/protocol.ts";
 	import { branchHue } from "../lib/layout.ts";
+	import NoteCard from "./NoteCard.svelte";
+	import SuggestionCard from "./SuggestionCard.svelte";
 
 	type Props = {
 		tree: TreeIndex;
@@ -10,8 +12,10 @@
 		forkTip: () => void;
 		newNote: () => void;
 		unshare: (noteId: string) => void;
+		accept: (id: string) => Promise<void>;
+		dismiss: (id: string) => void;
 	};
-	let { tree, activeId, select, create, forkTip, newNote, unshare }: Props = $props();
+	let { tree, activeId, select, create, forkTip, newNote, unshare, accept, dismiss }: Props = $props();
 
 	/** Branches in tree order: each fork listed under the branch it came from. */
 	const ordered = $derived.by(() => {
@@ -32,7 +36,7 @@
 	});
 
 	const targetLabel = (note: SharedNote) =>
-		note.to === "*" ? "all branches" : note.to.map((id) => tree.branches.find((b) => b.id === id)?.title ?? `#${id}`).join(", ");
+		note.to === "*" ? "all branches" : note.to.map((id) => tree.branches.find((b) => b.id === id)?.title ?? "another branch").join(", ");
 </script>
 
 <aside>
@@ -59,6 +63,17 @@
 		{/each}
 	</ul>
 
+	{#if tree.suggestions.length > 0}
+		<div class="section-head">
+			<h2>Suggested branches</h2>
+		</div>
+		<ul class="suggestions">
+			{#each tree.suggestions as suggestion (suggestion.id)}
+				<li><SuggestionCard {suggestion} branches={tree.branches} showSource {accept} {dismiss} /></li>
+			{/each}
+		</ul>
+	{/if}
+
 	<div class="section-head">
 		<h2>Shared context</h2>
 		<button onclick={newNote} title="Write a note every branch (or chosen ones) will see">Note</button>
@@ -74,8 +89,7 @@
 						<span class="note-title">{note.title}</span>
 						<span class="meta">{note.author === "model" ? "by a model" : "by you"} → {targetLabel(note)}</span>
 					</summary>
-					<div class="note-text">{note.text}</div>
-					<button class="danger" onclick={() => unshare(note.id)}>Unshare</button>
+					<NoteCard {note} branches={tree.branches} openBranch={(id) => select(id)} {unshare} />
 				</details>
 			</li>
 		{/each}
@@ -163,6 +177,11 @@
 		font-size: 11px;
 		color: var(--text-muted);
 	}
+	.suggestions {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
 	.hint {
 		font-size: 12px;
 		color: var(--text-muted);
@@ -185,11 +204,5 @@
 		display: block;
 		color: var(--text-muted);
 		font-size: 11px;
-	}
-	.note-text {
-		white-space: pre-wrap;
-		max-height: 240px;
-		overflow: auto;
-		margin: 6px 0;
 	}
 </style>

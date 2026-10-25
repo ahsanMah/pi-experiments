@@ -2,7 +2,7 @@
 // /tree conventions (flat single-child chains, ├─/└─ connectors and │ gutters only where a
 // node has several children, the active branch's path sorted first and marked with •).
 // A fork's first node hangs under the node it forked from, so branches nest at their fork points.
-import { type Component, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { type Component, isKeyRepeat, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { BranchInfo, TreeIndex, TreeNode } from "../shared/protocol.ts";
 import { fill, style } from "./theme.ts";
 
@@ -143,7 +143,7 @@ export class OverviewList implements Component {
 		if ((row.branchStart || row.showConnector) && branch !== undefined) {
 			const status = branch.busy ? style.yellow(`${this.#spinner} `) : "";
 			const queued = branch.queued > 0 ? style.dim(` +${branch.queued}`) : "";
-			const tag = `[${branch.id} ${branch.title || (branch.parent === undefined ? "Main" : `Branch ${branch.id}`)}]`;
+			const tag = `[${branch.title || "branch"}]`;
 			label = `${status}${onActive ? style.bold(style.cyan(tag)) : style.blue(tag)}${queued} `;
 		}
 		const tip = branch !== undefined && branch.tip === row.node.id ? style.dim(" ◆") : "";
@@ -175,6 +175,8 @@ export class OverviewList implements Component {
 		else if (matchesKey(data, "pageDown")) this.#selected = Math.min(this.#rows.length - 1, this.#selected + this.#maxVisible());
 		else if (matchesKey(data, Key.home)) this.#selected = 0;
 		else if (matchesKey(data, Key.end)) this.#selected = Math.max(0, this.#rows.length - 1);
+		// Movement may repeat while a key is held; actions and closing happen once per press.
+		else if (isKeyRepeat(data)) return;
 		else if (matchesKey(data, Key.enter)) {
 			if (node !== undefined) this.#actions.jump(node);
 		} else if (data === "b") {

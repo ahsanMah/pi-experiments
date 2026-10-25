@@ -8,6 +8,8 @@ import {
 	type Component,
 	Container,
 	Editor,
+	isKeyRelease,
+	isKeyRepeat,
 	isViewportTUI,
 	Key,
 	matchesKey,
@@ -21,7 +23,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { BranchInfo, ConversationId, TreeNode } from "../shared/protocol.ts";
 import { BranchesClient } from "./client.ts";
-import { pick, prompt } from "./dialogs.ts";
+import { pick, prompt, read } from "./dialogs.ts";
 import { OverviewList, OverviewPanel } from "./overview.ts";
 import { editorTheme, SPINNER, style } from "./theme.ts";
 import { TranscriptView } from "./transcript.ts";
@@ -69,7 +71,8 @@ const commands = [
 	{ name: "model", description: "Set this branch's model: /model [provider/id]" },
 	{ name: "share-note", description: "Share a note with every branch: /share-note <text>" },
 	{ name: "share", description: "Share this branch (summary or transcript) into other branches" },
-	{ name: "notes", description: "List shared notes and unshare them" },
+	{ name: "notes", description: "Read shared notes and unshare them" },
+	{ name: "suggestions", description: "Open or dismiss branches the models suggested" },
 	{ name: "abort", description: "Stop this branch's current run" },
 	{ name: "steer", description: "Steer the running work: /steer <text>" },
 	{ name: "help", description: "Show commands and keys" },
@@ -108,8 +111,7 @@ let modal = false;
 const spinner = () => SPINNER[spinnerFrame % SPINNER.length]!;
 const branchOf = (id: ConversationId): BranchInfo | undefined => client.tree.branches.find((b) => b.id === id);
 /** Branch title, with a fallback for branches the server has no title for yet. */
-const titleOf = (branch: BranchInfo | undefined, id?: ConversationId): string =>
-	branch?.title || (branch?.parent === undefined && branch !== undefined ? "Main" : `Branch ${branch?.id ?? id ?? "?"}`);
+const titleOf = (branch: BranchInfo | undefined, _id?: ConversationId): string => branch?.title || "another branch";
 
 const notify = (text: string, kind: "info" | "error" = "info") => {
 	notice.setText(kind === "error" ? style.red(`✗ ${text}`) : style.cyan(`• ${text}`));
@@ -129,20 +131,21 @@ const renderStatus = () => {
 		status.setText(style.dim("(no branch)"));
 		return;
 	}
-	const parts: string[] = [style.bold(style.cyan(`[${branch.id}] ${titleOf(branch)}`))];
+	const parts: string[] = [style.bold(style.cyan(titleOf(branch)))];
 	if (branch.parent !== undefined) parts.push(style.dim(`⑂ from ${titleOf(branchOf(branch.parent.conversationId), branch.parent.conversationId)}`));
 	parts.push(branch.busy ? style.yellow(`${spinner()} working`) : style.green("idle"));
 	if (branch.queued > 0) parts.push(style.yellow(`${branch.queued} queued`));
 	if (branch.model !== undefined) parts.push(style.dim(branch.model));
 	parts.push(style.dim(`$${branch.costUsd.toFixed(4)}`));
 	if (branch.sharedIn > 0) parts.push(style.magenta(`⇄ ${branch.sharedIn} shared`));
+	if (client.tree.suggestions.length > 0) parts.push(style.yellow(`✦ ${client.tree.suggestions.length} suggested (/suggestions)`));
 	const others = client.tree.branches.filter((b) => b.id !== active && b.busy);
 	parts.push(style.dim(`${client.tree.branches.length} branches`));
 	if (others.length > 0) parts.push(style.yellow(`${spinner()} also working: ${others.map((b) => titleOf(b)).join(", ")}`));
 	status.setText(parts.join(style.dim(" · ")));
 };
 
-const renderTranscript = () => transcript.update(active, client.views.get(active), client.tree.branches, spinner());
+const renderTranscript = () => transcript.update(active, client.views.get(active), client.tree.branches, client.tree.notes, client.tree.suggestions, spinner());
 
 const refresh = () => {
 	renderTranscript();
@@ -212,7 +215,7 @@ const forkAt = async (conversationId: ConversationId, at: number, defaultTitle: 
 	});
 	closeOverview();
 	await switchTo(fork);
-	notify(`Branched "${title || `Branch ${fork}`}". The source branch keeps going on its own.`);
+	notify(`Branched "${title || titleOf(branchOf(fork))}". The source branch keeps going on its own.`);
 	return fork;
 };
 
@@ -251,7 +254,7 @@ const share = async (from: { conversationId: ConversationId; at?: number }) => {
 			{ value: "*", label: "All branches", description: "Every branch, including ones created later" },
 			...client.tree.branches
 				.filter((b) => b.id !== from.conversationId)
-				.map((b) => ({ value: String(b.id), label: `[${b.id}] ${titleOf(b)}`, description: b.busy ? "working" : "idle" })),
+				.map((b) => ({ value: String(b.id), label: titleOf(b), description: b.busy ? "working" : "idle" })),
 		];
 		const target = await pick(tui, "Share into", targets);
 		if (target === undefined) return;
@@ -271,34 +274,90 @@ const share = async (from: { conversationId: ConversationId; at?: number }) => {
 };
 
 const rename = async (branch: BranchInfo) => {
-	const title = await withModal(() => prompt(tui, `Rename [${branch.id}]`, titleOf(branch)));
+	const title = await withModal(() => prompt(tui, `Rename "${titleOf(branch)}"`, titleOf(branch)));
 	if (title === undefined || title.trim() === "") return;
 	await client.request({ t: "rename", conversationId: branch.id, title: title.trim() }).catch(failed);
 };
 
-const manageNotes = async () => {
+/** A note's title from its text: the first sentence, or the first words that fit, never a cut word. */
+const noteTitle = (text: string, max = 60): string => {
+	const sentence = (/^[^.!?\n]+[.!?]?/.exec(text.trim())?.[0] ?? text).trim();
+	if (sentence.length <= max) return sentence;
+	// Cut at the last space that leaves room for the ellipsis; a first word longer than that stays whole.
+	const space = sentence.lastIndexOf(" ", max - 1);
+	const kept = space > 0 ? sentence.slice(0, space) : (sentence.split(/\s/)[0] ?? sentence);
+	return `${kept.trimEnd()}…`;
+};
+
+const manageSuggestions = async () => {
 	await withModal(async () => {
-		if (client.tree.notes.length === 0) {
-			notify("No shared notes yet. Use /share-note, /share, or s in the overview.");
+		const suggestions = client.tree.suggestions;
+		if (suggestions.length === 0) {
+			notify("No suggested branches. Models suggest them with suggest_branch.");
 			return;
 		}
 		const chosen = await pick(
 			tui,
-			"Shared notes (enter to unshare)",
-			client.tree.notes.map((note) => ({
-				value: note.id,
-				label: note.title,
-				description: `${note.to === "*" ? "→ all" : `→ ${note.to.map((id) => titleOf(branchOf(id), id)).join(", ")}`} · ${note.author}`,
-			})),
+			"Suggested branches",
+			suggestions.map((s) => ({ value: s.id, label: s.title, description: `from ${titleOf(branchOf(s.conversationId as ConversationId))} · ${s.reason}` })),
 		);
-		if (chosen === undefined) return;
-		const confirm = await pick(tui, "Unshare this note?", [
-			{ value: "yes", label: "Unshare", description: "Branches stop seeing it from their next request" },
-			{ value: "no", label: "Keep" },
-		]);
-		if (confirm === "yes") {
-			await client.request({ t: "unshare", noteId: chosen });
-			notify("Note unshared.");
+		const suggestion = suggestions.find((s) => s.id === chosen);
+		if (suggestion === undefined) return;
+		const action = await read(
+			tui,
+			suggestion.title,
+			`Suggested in ${titleOf(branchOf(suggestion.conversationId as ConversationId))}: ${suggestion.reason}`,
+			`The branch would start with:\n\n> ${suggestion.prompt}`,
+			[
+				{ key: "o", label: "open (prompt goes in the editor)" },
+				{ key: "d", label: "dismiss" },
+			],
+		);
+		if (action === "d") {
+			await client.request({ t: "dismissSuggestion", id: suggestion.id });
+			notify(`Dismissed "${suggestion.title}".`);
+		} else if (action === "o") {
+			const { conversationId, prompt: opening } = await client.request<{ conversationId: ConversationId; prompt: string }>({
+				t: "acceptSuggestion",
+				id: suggestion.id,
+			});
+			closeOverview();
+			await switchTo(conversationId);
+			editor.setText(opening);
+			notify(`Opened "${suggestion.title}". Edit the first message and press Enter to send it.`);
+		}
+	}).catch(failed);
+};
+
+const manageNotes = async () => {
+	await withModal(async () => {
+		// Read notes one at a time; u unshares the open one, esc goes back to the list.
+		for (;;) {
+			const notes = client.tree.notes;
+			if (notes.length === 0) {
+				notify("No shared notes yet. Use /share-note, /share, or s in the overview.");
+				return;
+			}
+			const targets = (note: (typeof notes)[number]) =>
+				note.to === "*" ? "every branch" : note.to.map((id) => titleOf(branchOf(id as ConversationId), id as ConversationId)).join(", ");
+			const chosen = await pick(
+				tui,
+				"Shared notes (enter to read)",
+				notes.map((note) => ({
+					value: note.id,
+					label: note.title,
+					description: `→ ${targets(note)} · ${note.author === "model" ? "by a model" : "by you"}`,
+				})),
+			);
+			const note = notes.find((n) => n.id === chosen);
+			if (note === undefined) return;
+			const from = note.from === undefined ? "" : ` from ${titleOf(branchOf(note.from.conversationId as ConversationId), note.from.conversationId as ConversationId)}`;
+			const meta = `${note.author === "model" ? "Posted by a model" : "Shared by you"}${from} → ${targets(note)} · ${new Date(note.createdAt).toLocaleString()}`;
+			const action = await read(tui, note.title, meta, note.text, [{ key: "u", label: "unshare" }]);
+			if (action === "u") {
+				await client.request({ t: "unshare", noteId: note.id });
+				notify(`Unshared "${note.title}". Branches stop seeing it from their next reply.`);
+			}
 		}
 	}).catch(failed);
 };
@@ -377,12 +436,14 @@ const runCommand = async (line: string) => {
 		}
 		case "share-note":
 			if (!arg) return notify("Usage: /share-note <text>", "error");
-			await client.request({ t: "share", mode: "note", to: "*", text: arg, title: arg.slice(0, 40) });
+			await client.request({ t: "share", mode: "note", to: "*", text: arg, title: noteTitle(arg) });
 			return notify("Shared with every branch.");
 		case "share":
 			return share({ conversationId: active });
 		case "notes":
 			return manageNotes();
+		case "suggestions":
+			return manageSuggestions();
 		case "abort":
 			await client.request({ t: "abort", conversationId: active });
 			return notify("Stopped this branch's run.");
@@ -406,6 +467,10 @@ editor.onSubmit = (value) => {
 };
 
 tui.addInputListener((data) => {
+	// Listeners get every key event, including the release and repeat events terminals with the
+	// Kitty keyboard protocol send (pi-tui filters those only for the focused component). Toggles
+	// act on the press alone: a release must not close what the press just opened.
+	if (isKeyRelease(data) || isKeyRepeat(data)) return undefined;
 	if (matchesKey(data, Key.ctrl("c"))) {
 		tui.stop();
 		client.close();

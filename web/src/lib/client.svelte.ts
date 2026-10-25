@@ -20,7 +20,7 @@ export type SocketLike = {
 const OPEN = 1;
 
 export class BranchesClient {
-	tree = $state<TreeIndex>({ branches: [], nodes: [], notes: [] });
+	tree = $state<TreeIndex>({ branches: [], nodes: [], notes: [], suggestions: [] });
 	views = $state<Record<number, ConversationView>>({});
 	models = $state<readonly string[]>([]);
 	defaultModel = $state("");

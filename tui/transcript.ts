@@ -2,7 +2,7 @@
 // live partial answer and tool round from docs["pi.live"]. Entries are immutable, so
 // each entry's components are built once and reused across commits.
 import { type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
-import type { BranchInfo } from "../shared/protocol.ts";
+import type { BranchInfo, BranchSuggestion, SharedNote } from "../shared/protocol.ts";
 import type { ConversationView, LiveToolSlot, ViewEntry } from "./client.ts";
 import { markdownTheme, style } from "./theme.ts";
 
@@ -46,10 +46,8 @@ const renderEntry = (entry: ViewEntry): Component[] => {
 			const mark = message?.isError === true ? style.red("  ↳ ") : style.dim("  ↳ ");
 			return [new TruncatedText(mark + style.dim(`${message?.toolName ?? "result"}: ${brief(result, 120)}`), 1, 0)];
 		}
-		case "branches.shared": {
-			const data = entry.data as { title?: string } | undefined;
-			return [new Spacer(1), new TruncatedText(style.magenta(`  ⇄ Shared into this branch: ${data?.title ?? "context"}`), 1, 0)];
-		}
+		case "branches.shared":
+			return []; // drawn by sharedMarker, since a note can be unshared later
 		case "pi.compaction":
 			return [new Spacer(1), new TruncatedText(style.dim("  ⋯ earlier context compacted"), 1, 0)];
 		case "pi.reset":
@@ -57,6 +55,20 @@ const renderEntry = (entry: ViewEntry): Component[] => {
 		default:
 			return [];
 	}
+};
+
+const NOTE_PREVIEW_LINES = 6;
+
+/** The marker of a note shared into this branch, with the start of its text. */
+const sharedMarker = (entry: ViewEntry, notes: readonly SharedNote[]): Component[] => {
+	const data = entry.data as { noteId?: string; title?: string } | undefined;
+	const note = notes.find((n) => n.id === data?.noteId);
+	const head = new TruncatedText(style.magenta(`  ⇄ Shared into this branch: ${data?.title ?? "context"}${note ? "" : " (unshared)"}`), 1, 0);
+	if (note === undefined) return [new Spacer(1), head];
+	const lines = note.text.split("\n");
+	const preview = lines.slice(0, NOTE_PREVIEW_LINES).join("\n");
+	const rest = lines.length > NOTE_PREVIEW_LINES ? `\n\n_${lines.length - NOTE_PREVIEW_LINES} more lines: /notes to read it all_` : "";
+	return [new Spacer(1), head, new Markdown(preview + rest, 4, 0, markdownTheme, { color: style.dim })];
 };
 
 const liveToolLine = (slot: LiveToolSlot, spinner: string): Component => {
@@ -70,7 +82,14 @@ export class TranscriptView extends Container {
 	#conversationId: number | undefined;
 
 	/** Rebuild from the view; `branches` names the parent at the fork boundary. */
-	update(conversationId: number, view: ConversationView | undefined, branches: readonly BranchInfo[], spinner: string): void {
+	update(
+		conversationId: number,
+		view: ConversationView | undefined,
+		branches: readonly BranchInfo[],
+		notes: readonly SharedNote[],
+		suggestions: readonly BranchSuggestion[],
+		spinner: string,
+	): void {
 		if (conversationId !== this.#conversationId) {
 			this.#cache.clear();
 			this.#conversationId = conversationId;
@@ -91,8 +110,12 @@ export class TranscriptView extends Container {
 				const parent = branches.find((b) => b.id === branch?.parent?.conversationId);
 				this.addChild(new Spacer(1));
 				this.addChild(
-					new TruncatedText(style.cyan(`── ⑂ branched from "${parent?.title || (parent?.parent === undefined ? "Main" : `Branch ${parent?.id}`)}" — "${branch?.title || "this branch"}" continues here ──`), 1, 0),
+					new TruncatedText(style.cyan(`── ⑂ branched from "${parent?.title || "another branch"}" — "${branch?.title || "this branch"}" continues here ──`), 1, 0),
 				);
+			}
+			if (entry.kind === "branches.shared") {
+				for (const part of sharedMarker(entry, notes)) this.addChild(part);
+				continue;
 			}
 			let parts = this.#cache.get(entry.id);
 			if (parts === undefined) {
@@ -117,6 +140,11 @@ export class TranscriptView extends Container {
 			this.addChild(new TruncatedText(style.red(`  retrying: ${brief(live.generation.retry.error, 100)}`), 1, 0));
 		}
 		if (live?.run !== undefined) this.addChild(new TruncatedText(style.cyan(`  ${spinner} working…`), 1, 0));
+		for (const suggestion of suggestions.filter((s) => s.conversationId === conversationId)) {
+			this.addChild(new Spacer(1));
+			this.addChild(new TruncatedText(style.yellow(`  ✦ Suggested branch: ${suggestion.title}`) + style.dim(" · /suggestions to open or dismiss"), 1, 0));
+			this.addChild(new TruncatedText(style.dim(`    ${suggestion.reason}`), 1, 0));
+		}
 		this.addChild(new Spacer(1));
 	}
 }
