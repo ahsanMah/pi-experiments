@@ -2,7 +2,7 @@
 // live partial answer and tool round from docs["pi.live"]. Entries are immutable, so
 // each entry's components are built once and reused across commits.
 import { type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
-import type { BranchInfo, SharedNote } from "../shared/protocol.ts";
+import type { BranchInfo, BranchSuggestion, SharedNote } from "../shared/protocol.ts";
 import type { ConversationView, LiveToolSlot, ViewEntry } from "./client.ts";
 import { markdownTheme, style } from "./theme.ts";
 
@@ -87,6 +87,7 @@ export class TranscriptView extends Container {
 		view: ConversationView | undefined,
 		branches: readonly BranchInfo[],
 		notes: readonly SharedNote[],
+		suggestions: readonly BranchSuggestion[],
 		spinner: string,
 	): void {
 		if (conversationId !== this.#conversationId) {
@@ -109,7 +110,7 @@ export class TranscriptView extends Container {
 				const parent = branches.find((b) => b.id === branch?.parent?.conversationId);
 				this.addChild(new Spacer(1));
 				this.addChild(
-					new TruncatedText(style.cyan(`── ⑂ branched from "${parent?.title || (parent?.parent === undefined ? "Main" : `Branch ${parent?.id}`)}" — "${branch?.title || "this branch"}" continues here ──`), 1, 0),
+					new TruncatedText(style.cyan(`── ⑂ branched from "${parent?.title || "another branch"}" — "${branch?.title || "this branch"}" continues here ──`), 1, 0),
 				);
 			}
 			if (entry.kind === "branches.shared") {
@@ -139,6 +140,11 @@ export class TranscriptView extends Container {
 			this.addChild(new TruncatedText(style.red(`  retrying: ${brief(live.generation.retry.error, 100)}`), 1, 0));
 		}
 		if (live?.run !== undefined) this.addChild(new TruncatedText(style.cyan(`  ${spinner} working…`), 1, 0));
+		for (const suggestion of suggestions.filter((s) => s.conversationId === conversationId)) {
+			this.addChild(new Spacer(1));
+			this.addChild(new TruncatedText(style.yellow(`  ✦ Suggested branch: ${suggestion.title}`) + style.dim(" · /suggestions to open or dismiss"), 1, 0));
+			this.addChild(new TruncatedText(style.dim(`    ${suggestion.reason}`), 1, 0));
+		}
 		this.addChild(new Spacer(1));
 	}
 }

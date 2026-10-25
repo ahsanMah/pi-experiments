@@ -99,6 +99,13 @@
 		shareRequest = { from: { conversationId, ...(at !== undefined ? { at } : {}) } };
 	};
 
+	const acceptSuggestion = async (id: string) => {
+		const { conversationId, prompt } = await client.request<{ conversationId: number; prompt: string }>({ t: "acceptSuggestion", id });
+		drafts[conversationId] = prompt;
+		open(conversationId);
+	};
+	const dismissSuggestion = (id: string) => void client.request({ t: "dismissSuggestion", id });
+
 	const send = async (text: string, whenBusy: "followUp" | "steer") => {
 		if (activeId === undefined) return;
 		focusId = null;
@@ -155,6 +162,8 @@
 			forkTip={() => active && active.tip !== null && fork(active.id, active.tip)}
 			newNote={() => (shareRequest = {})}
 			unshare={(noteId) => void client.request({ t: "unshare", noteId })}
+			accept={acceptSuggestion}
+			dismiss={dismissSuggestion}
 		/>
 	</div>
 
@@ -179,6 +188,9 @@
 					branches={client.tree.branches}
 					openBranch={(id, entry) => open(id, entry)}
 					unshare={(noteId) => void client.request({ t: "unshare", noteId })}
+					suggestions={client.tree.suggestions}
+					accept={acceptSuggestion}
+					dismiss={dismissSuggestion}
 					models={client.models}
 					{focusId}
 					bind:draft={() => drafts[active.id] ?? "", (value) => (drafts[active.id] = value)}

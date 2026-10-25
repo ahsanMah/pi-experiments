@@ -136,6 +136,33 @@ try {
 	await until((t) => t.branches.every((b) => !b.busy) && t.nodes.some((n) => n.preview.includes("Anyone watching")), "answer while unsubscribed");
 	assert((opsSeen.get(main.id) ?? 0) === opsBefore, "no frames arrive after the last unsubscribe");
 
+	// Each model is told where it sits; list_branches marks the caller.
+	const sideView = views.get(side) as { entries: { kind: string; model?: { role: string }[] }[] };
+	const prompt = JSON.stringify(sideView.entries.flatMap((e) => e.model ?? []).filter((m) => m.role === "system"));
+	assert(prompt.includes("It was forked from branch") && prompt.includes("suggest_branch"), "the side branch's prompt names its fork point and the tree tools");
+	await request({ t: "send", conversationId: side, text: "Please list branches" });
+	const listed = await until(
+		(t) => t.branches.every((b) => !b.busy) && t.nodes.some((n) => n.conversationId === side && n.preview.includes("list_branches tool replied")),
+		"list_branches answer",
+	);
+	const listNode = listed.nodes.find((n) => n.conversationId === side && n.preview.includes("list_branches tool replied"))!;
+	const { text: listing } = await request<{ text: string }>({ t: "text", conversationId: side, entryId: listNode.id });
+	assert(listing.includes("(this branch)") && listing.includes("started with:"), "list_branches marks this branch and what each started with");
+
+	// A model's suggestion becomes a branch only when opened, after the answer it came with.
+	await request({ t: "send", conversationId: main.id, text: "Suggest a branch about caching strategies" });
+	const suggested = await until((t) => t.suggestions.length === 1 && t.branches.every((b) => !b.busy), "a pending suggestion");
+	const suggestion = suggested.suggestions[0]!;
+	assert(suggestion.title === "caching strategies" && suggested.branches.length === 2, "the suggestion is pending, no branch yet");
+	const opened = await request<{ conversationId: number; prompt: string }>({ t: "acceptSuggestion", id: suggestion.id });
+	const withBranch = await until((t) => t.branches.some((b) => b.id === opened.conversationId) && t.suggestions.length === 0, "opened suggestion");
+	const answerNode = withBranch.nodes.find((n) => n.conversationId === main.id && n.role === "assistant" && n.id > suggestion.after)!;
+	const newBranch = withBranch.branches.find((b) => b.id === opened.conversationId)!;
+	assert(
+		newBranch.title === "caching strategies" && newBranch.parent?.conversationId === main.id && newBranch.parent.at === answerNode.id && opened.prompt.includes("caching"),
+		"opening forks after the suggesting answer, titled, with the proposed prompt",
+	);
+
 	// Malformed input gets an error and the server keeps serving.
 	socket.send("null");
 	socket.send("42");

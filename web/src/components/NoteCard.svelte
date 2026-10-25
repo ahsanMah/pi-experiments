@@ -11,7 +11,7 @@
 	};
 	let { note, branches, openBranch, unshare }: Props = $props();
 
-	const titleOf = (id: number) => branches.find((b) => b.id === id)?.title ?? `#${id}`;
+	const titleOf = (id: number) => branches.find((b) => b.id === id)?.title ?? "another branch";
 	const targets = $derived(note.to === "*" ? "every branch" : note.to.map(titleOf).join(", "));
 	const when = $derived(new Date(note.createdAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }));
 </script>

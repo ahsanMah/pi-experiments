@@ -143,7 +143,7 @@ export class OverviewList implements Component {
 		if ((row.branchStart || row.showConnector) && branch !== undefined) {
 			const status = branch.busy ? style.yellow(`${this.#spinner} `) : "";
 			const queued = branch.queued > 0 ? style.dim(` +${branch.queued}`) : "";
-			const tag = `[${branch.id} ${branch.title || (branch.parent === undefined ? "Main" : `Branch ${branch.id}`)}]`;
+			const tag = `[${branch.title || "branch"}]`;
 			label = `${status}${onActive ? style.bold(style.cyan(tag)) : style.blue(tag)}${queued} `;
 		}
 		const tip = branch !== undefined && branch.tip === row.node.id ? style.dim(" ◆") : "";

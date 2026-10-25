@@ -63,10 +63,25 @@ export type SharedNote = {
 	readonly author: "user" | "model";
 };
 
+/** A branch a model proposed with suggest_branch; it exists only once the user opens it. */
+export type BranchSuggestion = {
+	readonly id: string;
+	/** The branch whose model made the suggestion. */
+	readonly conversationId: ConversationId;
+	/** Newest entry of that branch when it was made; the branch opens after the answer that follows. */
+	readonly after: EntryId;
+	readonly title: string;
+	/** Opening message for the new branch, put in the composer for the user to edit and send. */
+	readonly prompt: string;
+	readonly reason: string;
+	readonly createdAt: number;
+};
+
 export type TreeIndex = {
 	readonly branches: readonly BranchInfo[];
 	readonly nodes: readonly TreeNode[];
 	readonly notes: readonly SharedNote[];
+	readonly suggestions: readonly BranchSuggestion[];
 };
 
 export type ShareMode =
@@ -106,6 +121,9 @@ export type ClientMessage = { readonly requestId?: string } & (
 			readonly text?: string;
 	  }
 	| { readonly t: "unshare"; readonly noteId: string }
+	/** Open a suggested branch. Ack result: { conversationId, prompt }; the client puts the prompt in its composer. */
+	| { readonly t: "acceptSuggestion"; readonly id: string }
+	| { readonly t: "dismissSuggestion"; readonly id: string }
 	/** Full text of a user or assistant entry (tree previews are cut short). Ack result: { text }. */
 	| { readonly t: "text"; readonly conversationId: ConversationId; readonly entryId: EntryId }
 );

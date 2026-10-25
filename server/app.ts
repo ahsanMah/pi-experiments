@@ -15,8 +15,8 @@ import {
 	type HarnessOptions,
 	type Storage,
 } from "@earendil-works/pi-durable";
-import type { SharedNote, ShareMode, TreeIndex } from "../shared/protocol.ts";
-import { BranchMetaDoc, createBranchesExtension, SHARED_ENTRY, SharedNotesDoc } from "./branches.ts";
+import type { BranchSuggestion, SharedNote, ShareMode, TreeIndex, TreeNode } from "../shared/protocol.ts";
+import { BranchMetaDoc, createBranchesExtension, SHARED_ENTRY, SharedNotesDoc, SuggestionsDoc, type BranchPlace } from "./branches.ts";
 import { classify, textOf, TreeIndexer } from "./tree.ts";
 
 export type AppOptions = {
@@ -44,7 +44,7 @@ export class BranchesApp {
 	readonly #models: Models;
 	readonly #agent: AgentChange;
 	readonly #listeners = new Set<(tree: TreeIndex) => void>();
-	#tree: TreeIndex = { branches: [], nodes: [], notes: [] };
+	#tree: TreeIndex = { branches: [], nodes: [], notes: [], suggestions: [] };
 	#rebuild: { timer?: ReturnType<typeof setTimeout>; running?: Promise<void>; again?: boolean } = {};
 
 	private constructor(harness: Harness, models: Models, defaultModel: string, agent: AgentChange, available: string[]) {
@@ -64,9 +64,12 @@ export class BranchesApp {
 		registry.install(
 			createBranchesExtension({
 				harness: () => app!.harness,
-				describeBranches: (ctx) => app!.describeBranches(ctx),
+				place: (id) => app?.place(id),
+				branchTitle: (id) => app?.tree.branches.find((b) => b.id === id)?.title ?? `branch ${id}`,
+				describeBranches: (self, ctx) => app!.describeBranches(ctx, self),
 				transcript: (id, at, ctx) => app!.transcript(id, at as EntryId | undefined, ctx),
 				addNote: (note, ctx) => app!.addNote(note, ctx),
+				suggest: (suggestion, ctx) => app!.suggest(suggestion, ctx),
 			}),
 		);
 
@@ -202,16 +205,87 @@ export class BranchesApp {
 		return textOf(entry.model?.[0]?.content as never);
 	}
 
-	async describeBranches(context: Context): Promise<string> {
+	/** The displayed node a branch's first own node hangs off: where it forked, as the overview shows it. */
+	#forkNode(tree: TreeIndex, id: number): TreeNode | undefined {
+		const first = tree.nodes.find((node) => node.conversationId === id);
+		return first?.parentId == null ? undefined : tree.nodes.find((node) => node.id === first.parentId);
+	}
+
+	/** Where a branch sits in the tree, from the latest index. */
+	place(id: ConversationId): BranchPlace | undefined {
+		const tree = this.#tree;
+		const branch = tree.branches.find((b) => b.id === (id as unknown as number));
+		if (branch === undefined) return undefined;
+		if (branch.parent === undefined) return { id: branch.id, title: branch.title };
+		const parent = tree.branches.find((b) => b.id === branch.parent!.conversationId);
+		const at = this.#forkNode(tree, branch.id);
+		return {
+			id: branch.id,
+			title: branch.title,
+			parent: { id: branch.parent.conversationId, title: parent?.title ?? `branch ${branch.parent.conversationId}`, after: at?.preview ?? "(the start)" },
+		};
+	}
+
+	async describeBranches(context: Context, self?: ConversationId): Promise<string> {
 		const tree = await this.indexer.build(context);
+		const quote = (text: string) => `"${text}"`;
 		return tree.branches
 			.map((branch) => {
-				const origin = branch.parent === undefined ? "root" : `forked from ${branch.parent.conversationId}`;
-				const status = branch.busy ? "working" : "idle";
+				const parent = branch.parent === undefined ? undefined : tree.branches.find((b) => b.id === branch.parent!.conversationId);
+				const forkedAfter = this.#forkNode(tree, branch.id);
+				const origin =
+					branch.parent === undefined
+						? "where the conversation started"
+						: `forked from ${branch.parent.conversationId} ${quote(parent?.title ?? "")}${forkedAfter ? ` after ${quote(forkedAfter.preview)}` : ""}`;
+				const own = tree.nodes.filter((node) => node.conversationId === branch.id);
+				const started = own.find((node) => node.role === "user");
 				const tip = tree.nodes.find((node) => node.id === branch.tip);
-				return `${branch.id}: "${branch.title}" (${origin}, ${status})${tip ? ` — last: ${tip.preview}` : ""}`;
+				return [
+					`${branch.id}: ${quote(branch.title)}${branch.id === (self as unknown as number) ? " (this branch)" : ""}`,
+					`  origin: ${origin}`,
+					`  status: ${branch.busy ? "working" : "idle"}${branch.model ? `, model ${branch.model}` : ""}`,
+					...(started ? [`  started with: ${quote(started.preview)}`] : []),
+					...(tip && tip !== started ? [`  last message: ${quote(tip.preview)}`] : []),
+				].join("\n");
 			})
 			.join("\n");
+	}
+
+	/** Record a branch a model proposed; it becomes a branch only when the user opens it. */
+	async suggest(suggestion: Omit<BranchSuggestion, "id" | "createdAt" | "after">, context: Context): Promise<BranchSuggestion> {
+		const conversation = await this.#conversation(suggestion.conversationId as unknown as ConversationId, context);
+		// The newest entry is the answer that called the tool; the branch opens after the answer that follows it.
+		const newest = (await conversation.entries({}, 1, undefined, context)).items[0];
+		if (newest === undefined) throw new Error("This branch has no messages yet");
+		const stored: BranchSuggestion = { ...suggestion, id: crypto.randomUUID(), createdAt: Date.now(), after: newest.id as unknown as number };
+		await this.harness.commit(async (tx) => {
+			(await tx.doc(SuggestionsDoc)).suggestions.push(stored as never);
+		}, context);
+		this.scheduleRebuild();
+		return stored;
+	}
+
+	/** Open a suggestion as a branch after the answer it came with; the client puts its prompt in the composer. */
+	async acceptSuggestion(id: string, context: Context): Promise<{ conversationId: ConversationId; prompt: string }> {
+		const suggestion = this.#tree.suggestions.find((s) => s.id === id);
+		if (suggestion === undefined) throw new Error("That suggestion was already opened or dismissed");
+		await this.rebuildNow(context);
+		const answer = this.#tree.nodes.find(
+			(node) => node.conversationId === suggestion.conversationId && node.role === "assistant" && node.id > suggestion.after,
+		);
+		if (answer === undefined) throw new Error("The branch that suggested this is still answering; open it once the answer is done");
+		const conversationId = await this.fork(suggestion.conversationId as unknown as ConversationId, answer.id as unknown as EntryId, suggestion.title, context);
+		await this.dismissSuggestion(id, context);
+		return { conversationId, prompt: suggestion.prompt };
+	}
+
+	async dismissSuggestion(id: string, context: Context): Promise<void> {
+		await this.harness.commit(async (tx) => {
+			const doc = await tx.doc(SuggestionsDoc);
+			const index = doc.suggestions.findIndex((s) => s.id === id);
+			if (index >= 0) doc.suggestions.splice(index, 1);
+		}, context);
+		await this.rebuildNow(context);
 	}
 
 	/** A branch's history through `at` as readable text, for summaries, read_branch, and transcript shares. */

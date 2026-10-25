@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { tick } from "svelte";
-	import type { BranchInfo, SharedNote, TreeNode } from "../../../shared/protocol.ts";
+	import type { BranchInfo, BranchSuggestion, SharedNote, TreeNode } from "../../../shared/protocol.ts";
 	import { branchHue } from "../lib/layout.ts";
 	import { renderMarkdown } from "../lib/markdown.ts";
 	import { textOf, type ConversationView, type ViewEntry } from "../lib/view.ts";
 	import Message from "./Message.svelte";
 	import NoteCard from "./NoteCard.svelte";
+	import SuggestionCard from "./SuggestionCard.svelte";
 
 	type Props = {
 		branch: BranchInfo;
@@ -15,6 +16,9 @@
 		branches: readonly BranchInfo[];
 		openBranch: (id: number, entry: number | null) => void;
 		unshare: (noteId: string) => void;
+		suggestions: readonly BranchSuggestion[];
+		accept: (id: string) => Promise<void>;
+		dismiss: (id: string) => void;
 		models: readonly string[];
 		focusId: number | null;
 		draft: string;
@@ -26,7 +30,7 @@
 		rename: (title: string) => void;
 		configure: (model: string) => void;
 	};
-	let { branch, view, nodes, notes, branches, openBranch, unshare, models, focusId, draft = $bindable(), send, abort, branchAfter, editBranch, share, rename, configure }: Props = $props();
+	let { branch, view, nodes, notes, branches, openBranch, unshare, suggestions, accept, dismiss, models, focusId, draft = $bindable(), send, abort, branchAfter, editBranch, share, rename, configure }: Props = $props();
 
 	let scroller: HTMLElement | undefined = $state();
 	let input: HTMLTextAreaElement | undefined = $state();
@@ -119,7 +123,7 @@
 		{:else}
 			<button class="title" title="Rename" onclick={() => ((titleDraft = branch.title), (editingTitle = true))}>{branch.title}</button>
 		{/if}
-		{#if branch.parent}<span class="muted">forked from #{branch.parent.conversationId}</span>{/if}
+		{#if branch.parent}<span class="muted">forked from {branches.find((b) => b.id === branch.parent?.conversationId)?.title ?? "another branch"}</span>{/if}
 		<span class="spacer"></span>
 		{#if seen.length > 0}
 			<button class="pill" aria-expanded={showNotes} onclick={() => (showNotes = !showNotes)} title="Show the shared notes this branch's model sees">
@@ -169,6 +173,9 @@
 				{#if forkAt !== undefined && entry.id === forkAt}
 					<div class="fork-line"><span>branch “{branch.title}” starts here</span></div>
 				{/if}
+			{/each}
+			{#each suggestions.filter((s) => s.conversationId === branch.id) as suggestion (suggestion.id)}
+				<div class="suggested"><SuggestionCard {suggestion} {branches} {accept} {dismiss} /></div>
 			{/each}
 			{#if branch.busy}
 				<div class="live">
@@ -317,6 +324,9 @@
 		color: var(--text-muted);
 		text-align: center;
 		margin-top: 20vh;
+	}
+	.suggested {
+		margin: 12px 0;
 	}
 	.fork-line {
 		display: flex;
