@@ -14,8 +14,10 @@
 		unshare: (noteId: string) => void;
 		accept: (id: string) => Promise<void>;
 		dismiss: (id: string) => void;
+		/** Open the command palette. */
+		commands: () => void;
 	};
-	let { tree, activeId, select, create, forkTip, newNote, unshare, accept, dismiss }: Props = $props();
+	let { tree, activeId, select, create, forkTip, newNote, unshare, accept, dismiss, commands }: Props = $props();
 
 	/** Branches in tree order: each fork listed under the branch it came from. */
 	const ordered = $derived.by(() => {
@@ -35,11 +37,16 @@
 		return out;
 	});
 
+	const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
+
 	const targetLabel = (note: SharedNote) =>
 		note.to === "*" ? "all branches" : note.to.map((id) => tree.branches.find((b) => b.id === id)?.title ?? "another branch").join(", ");
 </script>
 
 <aside>
+	<button class="commands" onclick={commands} title="Switch branches, search messages, run commands">
+		<span>Search or run a command…</span><kbd>{modKey}K</kbd>
+	</button>
 	<div class="section-head">
 		<h2>Branches</h2>
 		<button onclick={forkTip} title="Branch from the end of the current branch">Fork</button>
@@ -106,6 +113,28 @@
 		border-right: 1px solid var(--border);
 		padding: 10px 8px;
 		box-sizing: border-box;
+	}
+	.commands {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		width: 100%;
+		padding: 5px 8px;
+		color: var(--text-muted);
+		font-size: 12px;
+		text-align: left;
+	}
+	.commands span {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.commands kbd {
+		font: 11px ui-monospace, monospace;
+		padding: 0 4px;
+		border: 1px solid var(--border);
+		border-radius: 4px;
 	}
 	.section-head {
 		display: flex;

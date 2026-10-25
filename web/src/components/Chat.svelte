@@ -1,12 +1,14 @@
 <script lang="ts">
-	import { tick } from "svelte";
+	import { tick, untrack } from "svelte";
 	import type { BranchInfo, BranchSuggestion, SharedNote, TreeNode } from "../../../shared/protocol.ts";
+	import { forkOptions, indexForks } from "../lib/forks.ts";
 	import { branchHue } from "../lib/layout.ts";
 	import { renderMarkdown } from "../lib/markdown.ts";
 	import { textOf, type ConversationView, type ViewEntry } from "../lib/view.ts";
 	import Message from "./Message.svelte";
 	import NoteCard from "./NoteCard.svelte";
 	import SuggestionCard from "./SuggestionCard.svelte";
+	import Switcher from "./Switcher.svelte";
 
 	type Props = {
 		branch: BranchInfo;
@@ -21,6 +23,10 @@
 		dismiss: (id: string) => void;
 		models: readonly string[];
 		focusId: number | null;
+		/** Where a fork switcher was on screen when it opened this branch, to put it back there. */
+		anchor: { at: number; top: number } | null;
+		/** Open a sibling branch from the switcher at `at`, which was `top` px down the window. */
+		switchAt: (branchId: number, at: number, top: number) => void;
 		draft: string;
 		send: (text: string, whenBusy: "followUp" | "steer") => Promise<void>;
 		abort: () => void;
@@ -30,7 +36,7 @@
 		rename: (title: string) => void;
 		configure: (model: string) => void;
 	};
-	let { branch, view, nodes, notes, branches, openBranch, unshare, suggestions, accept, dismiss, models, focusId, draft = $bindable(), send, abort, branchAfter, editBranch, share, rename, configure }: Props = $props();
+	let { branch, view, nodes, notes, branches, openBranch, unshare, suggestions, accept, dismiss, models, focusId, anchor, switchAt, draft = $bindable(), send, abort, branchAfter, editBranch, share, rename, configure }: Props = $props();
 
 	let scroller: HTMLElement | undefined = $state();
 	let input: HTMLTextAreaElement | undefined = $state();
@@ -53,7 +59,16 @@
 	const partial = $derived(textOf(live?.generation?.message?.content));
 	const runningTools = $derived((live?.tools ?? []).filter((t) => t.status !== "done"));
 	const queued = $derived(view?.docs["pi.inbox"]?.items.length ?? 0);
-	const forkAt = $derived(branch.parent?.at);
+	// Fork points along this branch: an inline switcher to the other ways to continue there.
+	const forkIndex = $derived(indexForks(nodes, branches));
+	const path = $derived(new Set(entries.map((e) => e.id)));
+	const forks = $derived(
+		new Map(entries.map((e) => [e.id, forkOptions(forkIndex, branches, e.id, branch.id, path)] as const).filter(([, options]) => options.length > 0)),
+	);
+	/** The switcher anchor still to apply once this branch's view arrives. */
+	let pending = untrack(() => anchor);
+	/** Room after the last message, so a shorter branch can still put the switcher back in place. */
+	let slack = $state(0);
 
 	// Stay at the bottom while streaming unless the user scrolled up.
 	const onScroll = () => {
@@ -63,7 +78,26 @@
 	$effect(() => {
 		void entries.length;
 		void partial;
-		if (stick && focusId === null) void tick().then(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
+		if (stick && focusId === null && pending === null) void tick().then(() => scroller?.scrollTo({ top: scroller.scrollHeight }));
+	});
+	$effect(() => {
+		const target = pending;
+		if (target === null || view === undefined) return;
+		pending = null;
+		// Before the await, so the follow-the-bottom effect for this same update stays out of it.
+		stick = false;
+		void (async () => {
+			await tick();
+			const chip = scroller?.querySelector(`[data-fork="${target.at}"]`);
+			if (chip === null || chip === undefined || scroller === undefined) return;
+			const top = scroller.scrollTop + chip.getBoundingClientRect().top - target.top;
+			const max = scroller.scrollHeight - scroller.clientHeight;
+			if (top > max) {
+				slack = top - max;
+				await tick();
+			}
+			scroller.scrollTo({ top, behavior: "instant" });
+		})();
 	});
 	$effect(() => {
 		if (focusId === null) return;
@@ -88,6 +122,32 @@
 		}
 	};
 
+	const pick = (branchId: number, at: number) => {
+		const chip = scroller?.querySelector(`[data-fork="${at}"]`);
+		switchAt(branchId, at, chip?.getBoundingClientRect().top ?? 0);
+	};
+	/** [ and ] (Alt+[ / Alt+] while typing) step through the branches at the fork nearest mid-screen. */
+	const cycleFork = (event: KeyboardEvent) => {
+		if (event.metaKey || event.ctrlKey || (event.code !== "BracketLeft" && event.code !== "BracketRight")) return;
+		const typing = (event.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable]") != null;
+		if (typing && !event.altKey) return;
+		if (scroller === undefined || forks.size === 0) return;
+		const middle = scroller.getBoundingClientRect().top + scroller.clientHeight / 2;
+		let best: number | undefined;
+		let distance = Infinity;
+		for (const at of forks.keys()) {
+			const chip = scroller.querySelector(`[data-fork="${at}"]`);
+			const d = chip === null ? Infinity : Math.abs(chip.getBoundingClientRect().top - middle);
+			if (d < distance) [best, distance] = [at, d];
+		}
+		const options = best === undefined ? undefined : forks.get(best);
+		if (best === undefined || options === undefined) return;
+		event.preventDefault();
+		const current = Math.max(0, options.findIndex((o) => o.current));
+		const delta = event.code === "BracketLeft" ? -1 : 1;
+		pick(options[(current + delta + options.length) % options.length]!.branch.id, best);
+	};
+
 	const onKey = (event: KeyboardEvent) => {
 		if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
 			event.preventDefault();
@@ -102,6 +162,8 @@
 	let editingTitle = $state(false);
 	let titleDraft = $state("");
 </script>
+
+<svelte:window onkeydown={cycleFork} />
 
 <section class="chat" style="--hue: {branchHue(branch.id)}">
 	<header>
@@ -170,8 +232,8 @@
 					{branches}
 					{openBranch}
 				/>
-				{#if forkAt !== undefined && entry.id === forkAt}
-					<div class="fork-line"><span>branch “{branch.title}” starts here</span></div>
+				{#if forks.has(entry.id)}
+					<Switcher at={entry.id} options={forks.get(entry.id)!} {pick} />
 				{/if}
 			{/each}
 			{#each suggestions.filter((s) => s.conversationId === branch.id) as suggestion (suggestion.id)}
@@ -189,6 +251,7 @@
 					<div class="typing"><span></span><span></span><span></span></div>
 				</div>
 			{/if}
+			{#if slack > 0}<div style="height: {slack}px" aria-hidden="true"></div>{/if}
 		</div>
 	</div>
 
@@ -327,20 +390,6 @@
 	}
 	.suggested {
 		margin: 12px 0;
-	}
-	.fork-line {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		margin: 18px 0;
-		color: hsl(var(--hue) 55% 50%);
-		font-size: 12px;
-	}
-	.fork-line::before,
-	.fork-line::after {
-		content: "";
-		flex: 1;
-		border-top: 1px dashed currentColor;
 	}
 	.live .markdown :global(p) {
 		margin: 0.4em 0;

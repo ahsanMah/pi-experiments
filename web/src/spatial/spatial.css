@@ -1,0 +1,166 @@
+/* Spatial view tokens: a warm paper canvas with white cards in light mode, a deep graphite
+   canvas in dark mode. Branch colors come from branchHue() and are mixed in per component.
+   Everything is scoped to .spatial, so the chat view and its overview canvas keep their own look. */
+.spatial {
+	--canvas: #f3f1ec;
+	--grid: #d6d2c8;
+	--card: #ffffff;
+	--card-line: rgb(28 24 40 / 0.09);
+	--panel: #ffffff;
+	--glass: rgb(255 255 255 / 0.82);
+	--ink: #1c1b21;
+	--ink-soft: #57555f;
+	--ink-faint: #8e8b96;
+	--line: rgb(28 24 48 / 0.1);
+	--chip: rgb(28 24 48 / 0.055);
+	--hover: rgb(28 24 48 / 0.035);
+	--well: #f8f7f4;
+	--field: #faf9f7;
+	--paper: #ffffff;
+	--accent: #4f5bd5;
+	--accent-ring: rgb(79 91 213 / 0.16);
+	--live: #16a34a;
+	--danger: #d1435b;
+	--danger-soft: rgb(209 67 91 / 0.1);
+	--sticky: #fbe8a6;
+	--sticky-model: #e6defb;
+	--sticky-ink: #946200;
+	--sticky-text: #3a2e10;
+	--sticky-soft: rgb(234 170 8 / 0.16);
+	--hue-text-l: 38%;
+	--scrim: rgb(24 20 36 / 0.26);
+	--minimap-mask: rgb(28 24 48 / 0.05);
+	--shadow-card: 0 1px 2px rgb(30 25 50 / 0.05), 0 10px 28px -12px rgb(30 25 50 / 0.18);
+	--shadow-lift: 0 2px 6px rgb(30 25 50 / 0.06), 0 24px 54px -18px rgb(30 25 50 / 0.32);
+	--shadow-panel: 0 2px 6px rgb(30 25 50 / 0.05), 0 40px 90px -30px rgb(30 25 50 / 0.45);
+	--shadow-sticky: 0 1px 1px rgb(80 50 0 / 0.08), 0 12px 22px -12px rgb(120 80 0 / 0.45);
+	--sans: "Inter var", Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) .spatial {
+		--canvas: #101013;
+		--grid: #2b2b33;
+		--card: #1b1b21;
+		--card-line: rgb(255 255 255 / 0.075);
+		--panel: #19191e;
+		--glass: rgb(27 27 33 / 0.82);
+		--ink: #eeedf3;
+		--ink-soft: #b3b1bd;
+		--ink-faint: #7d7b88;
+		--line: rgb(255 255 255 / 0.09);
+		--chip: rgb(255 255 255 / 0.065);
+		--hover: rgb(255 255 255 / 0.035);
+		--well: #141418;
+		--field: #141418;
+		--paper: #111114;
+		--accent: #8f98ff;
+		--accent-ring: rgb(143 152 255 / 0.22);
+		--live: #4ade80;
+		--danger: #f06a82;
+		--danger-soft: rgb(240 106 130 / 0.13);
+		--sticky: #3d3420;
+		--sticky-model: #2e2944;
+		--sticky-ink: #e9b949;
+		--sticky-text: #f4e8c8;
+		--sticky-soft: rgb(233 185 73 / 0.15);
+		--hue-text-l: 72%;
+		--scrim: rgb(0 0 0 / 0.5);
+		--minimap-mask: rgb(0 0 0 / 0.35);
+		--shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 30px -12px rgb(0 0 0 / 0.6);
+		--shadow-lift: 0 2px 6px rgb(0 0 0 / 0.4), 0 26px 56px -18px rgb(0 0 0 / 0.75);
+		--shadow-panel: 0 2px 6px rgb(0 0 0 / 0.4), 0 40px 90px -30px rgb(0 0 0 / 0.85);
+		--shadow-sticky: 0 1px 1px rgb(0 0 0 / 0.3), 0 14px 24px -12px rgb(0 0 0 / 0.7);
+	}
+}
+
+:root[data-theme="dark"] .spatial {
+	--canvas: #101013;
+	--grid: #2b2b33;
+	--card: #1b1b21;
+	--card-line: rgb(255 255 255 / 0.075);
+	--panel: #19191e;
+	--glass: rgb(27 27 33 / 0.82);
+	--ink: #eeedf3;
+	--ink-soft: #b3b1bd;
+	--ink-faint: #7d7b88;
+	--line: rgb(255 255 255 / 0.09);
+	--chip: rgb(255 255 255 / 0.065);
+	--hover: rgb(255 255 255 / 0.035);
+	--well: #141418;
+	--field: #141418;
+	--paper: #111114;
+	--accent: #8f98ff;
+	--accent-ring: rgb(143 152 255 / 0.22);
+	--live: #4ade80;
+	--danger: #f06a82;
+	--danger-soft: rgb(240 106 130 / 0.13);
+	--sticky: #3d3420;
+	--sticky-model: #2e2944;
+	--sticky-ink: #e9b949;
+	--sticky-text: #f4e8c8;
+	--sticky-soft: rgb(233 185 73 / 0.15);
+	--hue-text-l: 72%;
+	--scrim: rgb(0 0 0 / 0.5);
+	--minimap-mask: rgb(0 0 0 / 0.35);
+	--shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 30px -12px rgb(0 0 0 / 0.6);
+	--shadow-lift: 0 2px 6px rgb(0 0 0 / 0.4), 0 26px 56px -18px rgb(0 0 0 / 0.75);
+	--shadow-panel: 0 2px 6px rgb(0 0 0 / 0.4), 0 40px 90px -30px rgb(0 0 0 / 0.85);
+	--shadow-sticky: 0 1px 1px rgb(0 0 0 / 0.3), 0 14px 24px -12px rgb(0 0 0 / 0.7);
+}
+
+.spatial {
+	background: var(--canvas);
+	color: var(--ink);
+	font: 14px/1.5 var(--sans);
+	-webkit-font-smoothing: antialiased;
+	font-feature-settings: "cv11", "ss01";
+}
+
+.spatial :is(button, select, input, textarea) {
+	font-family: inherit;
+}
+
+.spatial :focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* xyflow, restyled: cards and stickies draw their own chrome. */
+.spatial .svelte-flow {
+	--xy-background-color: var(--canvas);
+	--xy-node-boxshadow-selected: none;
+	background: var(--canvas);
+}
+.spatial .svelte-flow__node {
+	border-radius: 18px;
+}
+.spatial .svelte-flow__node:focus,
+.spatial .svelte-flow__node:focus-visible {
+	outline: none;
+}
+/* Cards glide to their new place when the tree grows, but follow the pointer exactly while dragged. */
+.spatial .svelte-flow__node:not(.dragging) {
+	transition: transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.spatial .svelte-flow__minimap {
+	border-radius: 14px;
+	overflow: hidden;
+	border: 1px solid var(--card-line);
+	box-shadow: var(--shadow-card);
+	margin: 18px;
+}
+.spatial .svelte-flow__edges {
+	overflow: visible;
+}
+@media (max-width: 760px) {
+	.spatial .svelte-flow__minimap {
+		display: none;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.spatial .svelte-flow__node:not(.dragging) {
+		transition: none;
+	}
+}
