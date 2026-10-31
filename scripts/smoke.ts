@@ -125,14 +125,25 @@ try {
 	);
 	assert(true, "a share with every branch marks each branch");
 
-	// A summary of a fork covers only what the fork added; the inherited part is one "forked from" line.
-	const { noteId: summaryId } = await request<{ noteId: string }>({ t: "share", mode: "summary", from: { conversationId: side }, to: [main.id] });
-	const summary = (await until((t) => t.notes.some((n) => n.id === summaryId), "summary note")).notes.find((n) => n.id === summaryId)!;
+	// A summary covers only the source's history after its lowest common ancestor with the target.
+	const summarize = async (from: number, to: number[]) => {
+		const { noteIds } = await request<{ noteIds: string[] }>({ t: "share", mode: "summary", from: { conversationId: from }, to });
+		const tree = await until((t) => noteIds.every((id) => t.notes.some((n) => n.id === id)), "summary notes");
+		// The first line names the shared point; the summary body follows it.
+		return noteIds.map((id) => {
+			const text = tree.notes.find((n) => n.id === id)!.text;
+			return { text, body: text.startsWith("Branch") ? text.slice(text.indexOf("\n\n")) : text };
+		});
+	};
+	const [fromSide] = await summarize(side, [main.id]);
 	assert(
-		summary.text.startsWith("Forked from branch") &&
-			summary.text.includes("Side question") &&
-			!summary.text.includes("Asked: What is a durable harness?"),
-		`a fork's summary leaves its inherited part to the fork line:\n${summary.text}`,
+		fromSide!.text.startsWith("Branch") && fromSide!.body.includes("Side question") && !fromSide!.body.includes("durable harness"),
+		`a fork's summary for its parent leaves out what they share:\n${fromSide!.text}`,
+	);
+	const [fromMain] = await summarize(main.id, [side]);
+	assert(
+		fromMain!.text.startsWith("Branch") && fromMain!.body.includes("storage backends") && !fromMain!.body.includes("durable harness") && !fromMain!.body.includes("Side question"),
+		`a parent's summary for its fork covers only what came after the fork point:\n${fromMain!.text}`,
 	);
 
 	// Rapid switching leaves the subscription in its last requested state.
@@ -174,6 +185,15 @@ try {
 	);
 
 	// Malformed input gets an error and the server keeps serving.
+	// Targets with different common ancestors get separate notes; an unrelated root gets the whole history.
+	await until((t) => t.branches.every((b) => !b.busy), "idle before split summary");
+	const { conversationId: root2 } = await request<{ conversationId: number }>({ t: "new", title: "Unrelated" });
+	const split = await summarize(main.id, [side, root2]);
+	assert(
+		split.length === 2 && split.some((n) => n.text.includes("durable harness") && !n.text.startsWith("Branch")),
+		"targets with different common ancestors get separate notes; an unrelated branch gets the whole history",
+	);
+
 	socket.send("null");
 	socket.send("42");
 	await request({ t: "rename", conversationId: side, title: "Still alive" });
