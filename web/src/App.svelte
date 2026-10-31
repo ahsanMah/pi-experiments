@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { SvelteFlowProvider } from "@xyflow/svelte";
-	import type { ShareMode, TreeNode } from "../../shared/protocol.ts";
+	import type { BranchInfo, ShareMode, TreeNode } from "../../shared/protocol.ts";
 	import Canvas from "./components/Canvas.svelte";
 	import Chat from "./components/Chat.svelte";
+	import Palette, { type PaletteItem, type PalettePage } from "./components/Palette.svelte";
 	import ShareDialog, { type ShareRequest } from "./components/ShareDialog.svelte";
 	import Sidebar from "./components/Sidebar.svelte";
 	import type { BranchesClient } from "./lib/client.svelte.ts";
+	import { branchHue } from "./lib/layout.ts";
+	import Spatial from "./spatial/Spatial.svelte";
 
 	let { client, demo = false }: { client: BranchesClient; demo?: boolean } = $props();
 
@@ -17,6 +20,11 @@
 	let focusId = $state<number | null>(null);
 	let drafts = $state<Record<number, string>>({});
 	let shareRequest = $state<ShareRequest | undefined>();
+	/** Where the fork switcher that opened the active branch sat on screen, to keep it in place. */
+	let anchor = $state<{ at: number; top: number } | null>(null);
+	/** The chat with its overview, or the spatial canvas where every branch is a card. */
+	let view = $state<"chat" | "spatial">("chat");
+	let palette = $state<{ start?: PalettePage } | undefined>();
 	type OverviewMode = "side" | "full" | "hidden";
 	// Layout preferences are per-viewer conveniences; storage may be unavailable (private windows, sandboxes).
 	const stored = (key: string): string | null => {
@@ -26,6 +34,21 @@
 			return null;
 		}
 	};
+	// Light, dark, or the system setting. A chosen theme sets data-theme on the root, which every
+	// stylesheet here (and the spatial view) already follows; "system" clears it again.
+	type Theme = "system" | "light" | "dark";
+	let theme = $state<Theme>((stored("theme") as Theme | null) ?? "system");
+	let themeSet = false;
+	$effect(() => {
+		if (theme !== "system") {
+			document.documentElement.dataset.theme = theme;
+			themeSet = true;
+		} else if (themeSet) delete document.documentElement.dataset.theme;
+		try {
+			localStorage.setItem("theme", theme);
+		} catch {}
+	});
+	const cycleTheme = () => (theme = theme === "system" ? (dark ? "light" : "dark") : theme === "dark" ? "light" : "system");
 	let overview = $state<OverviewMode>((stored("overview") as OverviewMode | null) ?? "side");
 	let panelWidth = $state(Number(stored("panelWidth") ?? 460));
 	// Follow an explicit data-theme on the root (set by a host page), else the system setting.
@@ -65,7 +88,8 @@
 		} catch {
 			// Sandboxed frames may refuse URL changes; the open branch just isn't kept in the URL.
 		}
-		client.watch(activeId === undefined ? [] : [activeId]);
+		// The spatial view watches the cards it shows itself.
+		if (view === "chat") client.watch(activeId === undefined ? [] : [activeId]);
 	});
 
 	const active = $derived(client.tree.branches.find((b) => b.id === activeId));
@@ -73,6 +97,11 @@
 	const open = (id: number, entry: number | null = null) => {
 		activeId = id;
 		focusId = entry;
+		anchor = null;
+	};
+	const switchAt = (id: number, at: number, top: number) => {
+		open(id);
+		anchor = { at, top };
 	};
 
 	const openNode = (node: TreeNode) => {
@@ -123,7 +152,129 @@
 		});
 	};
 
+	// ── Command palette ──
+	const shareTo = (mode: ShareMode, to: number[] | "*", from?: { conversationId: number }, text = "") =>
+		client.request({ t: "share", mode, to, ...(from !== undefined ? { from } : {}), ...(text !== "" ? { text } : {}) });
+	const pickTargets = (title: string, exclude: number | undefined, done: (to: number[] | "*") => Promise<unknown>): PalettePage => ({
+		kind: "multi",
+		title,
+		placeholder: "Pick branches to share with…",
+		options: [
+			{ value: "*", label: "Every branch", detail: "now and later" },
+			...client.tree.branches.filter((b) => b.id !== exclude).map((b) => ({ value: b.id, label: b.title, hue: branchHue(b.id) })),
+		],
+		initial: [],
+		confirmLabel: (n) => (n < 0 ? "Share with every branch" : `Share with ${n} branch${n === 1 ? "" : "es"}`),
+		confirm: async (to) => void (await done(to)),
+	});
+	const sharePage = (branch: BranchInfo, mode: "summary" | "transcript"): PalettePage =>
+		pickTargets(`Share ${mode} of ${branch.title}`, branch.id, (to) => shareTo(mode, to, { conversationId: branch.id }));
+	const notePage = (): PalettePage => ({
+		kind: "input",
+		title: "Write a note",
+		placeholder: "What should the other branches know?",
+		confirmLabel: "Choose branches",
+		submit: (text) => pickTargets("Note → branches", undefined, (to) => shareTo("note", to, undefined, text)),
+	});
+	const renamePage = (branch: BranchInfo): PalettePage => ({
+		kind: "input",
+		title: `Rename ${branch.title}`,
+		placeholder: "New title",
+		initial: branch.title,
+		confirmLabel: "Rename",
+		submit: async (title) => void (await client.request({ t: "rename", conversationId: branch.id, title })),
+	});
+	const modelPage = (branch: BranchInfo): PalettePage => ({
+		kind: "list",
+		title: `Model for ${branch.title}`,
+		placeholder: "Search models…",
+		items: client.models.map((model) => ({
+			id: `model:${model}`,
+			label: model,
+			group: "Models",
+			icon: model === branch.model ? "✓" : "",
+			...(model === client.defaultModel ? { detail: "default" } : {}),
+			run: async () => void (await client.request({ t: "configure", conversationId: branch.id, model })),
+		})),
+	});
+	const toChat = (id?: number, entry: number | null = null) => {
+		view = "chat";
+		if (id !== undefined) open(id, entry);
+	};
+	const newThread = async () => {
+		const { conversationId } = await client.request<{ conversationId: number }>({ t: "new" });
+		toChat(conversationId);
+	};
+
+	const commands = $derived.by((): PaletteItem[] => {
+		const items: PaletteItem[] = [];
+		const titleOf = (id: number) => client.tree.branches.find((b) => b.id === id)?.title ?? "another branch";
+		const a = active;
+		if (a !== undefined) {
+			const act = (item: Omit<PaletteItem, "group">) => items.push({ ...item, group: `Actions · ${a.title}` });
+			if (a.tip !== null) act({ id: "branch", icon: "⑂", label: "Branch from the latest message", keywords: "fork", run: () => fork(a.id, a.tip!).then(() => toChat()) });
+			act({ id: "share-summary", icon: "⇄", label: `Share a summary of ${a.title} to…`, keywords: "context", run: () => sharePage(a, "summary") });
+			act({ id: "share-transcript", icon: "⇄", label: `Share the transcript of ${a.title} to…`, keywords: "context", run: () => sharePage(a, "transcript") });
+			act({ id: "rename", icon: "✎", label: "Rename…", detail: a.title, run: () => renamePage(a) });
+			act({ id: "model", icon: "◇", label: "Change model…", detail: a.model, run: () => modelPage(a) });
+			if (a.busy) act({ id: "stop", icon: "■", label: `Stop ${a.title}`, keywords: "abort cancel", run: () => void client.request({ t: "abort", conversationId: a.id }) });
+		}
+		const app = (item: Omit<PaletteItem, "group">) => items.push({ ...item, group: "Pi Branches" });
+		app(
+			view === "chat"
+				? { id: "spatial", icon: "▦", label: "Open the spatial view", detail: "every branch as a card on a canvas", keywords: "canvas tree cards", run: () => void (view = "spatial") }
+				: { id: "chat", icon: "☰", label: "Back to the chat view", keywords: "conversation", run: () => toChat() },
+		);
+		app({ id: "theme", icon: "◐", label: "Change theme", detail: `now ${theme}`, keywords: "light dark appearance mode", run: () => void cycleTheme() });
+		app({ id: "new", icon: "＋", label: "New thread", detail: "an unrelated conversation", keywords: "create root branch", run: newThread });
+		app({ id: "note", icon: "✦", label: "Write a note to…", keywords: "share context", run: notePage });
+		if (view === "chat")
+			app({
+				id: "overview",
+				icon: "◫",
+				label: overview === "hidden" ? "Show the overview" : overview === "side" ? "Overview full screen" : "Hide the overview",
+				shortcut: "Alt+O",
+				keywords: "tree canvas panel",
+				run: () => void (overview = overview === "side" ? "full" : overview === "full" ? "hidden" : "side"),
+			});
+		for (const branch of client.tree.branches) {
+			const parent = branch.parent === undefined ? undefined : titleOf(branch.parent.conversationId);
+			items.push({
+				id: `branch:${branch.id}`,
+				group: "Switch to…",
+				label: branch.title,
+				hue: branchHue(branch.id),
+				detail: [branch.busy ? "working" : "", parent ? `from ${parent}` : "", branch.model ?? ""].filter(Boolean).join(" · "),
+				run: () => toChat(branch.id),
+				...(branch.tip !== null ? { alt: { label: "branch from its end", run: () => fork(branch.id, branch.tip!).then(() => toChat()) } } : {}),
+			});
+		}
+		// Message search over the tree's previews; opening one scrolls the chat to it.
+		for (const node of client.tree.nodes) {
+			if (node.role !== "user" && node.role !== "assistant") continue;
+			items.push({
+				id: `node:${node.id}`,
+				group: "Messages",
+				searchOnly: true,
+				icon: node.role === "user" ? "›" : "◆",
+				label: node.preview,
+				detail: titleOf(node.conversationId),
+				run: () => {
+					view = "chat";
+					openNode(node);
+				},
+				alt: { label: "branch from this message", run: () => fork(node.conversationId, node.id).then(() => toChat()) },
+			});
+		}
+		return items;
+	});
+
 	const onKey = (event: KeyboardEvent) => {
+		if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+			event.preventDefault();
+			palette = palette === undefined ? {} : undefined;
+			return;
+		}
 		if (event.altKey && event.key.toLowerCase() === "o") {
 			event.preventDefault();
 			overview = overview === "side" ? "full" : overview === "full" ? "hidden" : "side";
@@ -149,6 +300,11 @@
 	</div>
 {/if}
 
+{#if view === "spatial"}
+	<div class="spatial-view">
+		<Spatial {client} {demo} start={activeId} back={(id) => toChat(id)} />
+	</div>
+{:else}
 <div class="app" class:full={overview === "full"} class:hidden={overview === "hidden"} style="--panel: {panelWidth}px">
 	<div class="sidebar">
 		<Sidebar
@@ -164,6 +320,9 @@
 			unshare={(noteId) => void client.request({ t: "unshare", noteId })}
 			accept={acceptSuggestion}
 			dismiss={dismissSuggestion}
+			commands={() => (palette = {})}
+			{theme}
+			{cycleTheme}
 		/>
 	</div>
 
@@ -176,6 +335,7 @@
 						<option value={branch.id}>{branch.busy ? "● " : ""}{branch.title}</option>
 					{/each}
 				</select>
+				<button onclick={() => (palette = {})} title="Search or run a command">Search</button>
 			</label>
 		{/if}
 		{#if active}
@@ -193,6 +353,8 @@
 					dismiss={dismissSuggestion}
 					models={client.models}
 					{focusId}
+					{anchor}
+					{switchAt}
 					bind:draft={() => drafts[active.id] ?? "", (value) => (drafts[active.id] = value)}
 					{send}
 					abort={() => void client.request({ t: "abort", conversationId: active.id })}
@@ -216,6 +378,7 @@
 			<strong>Overview</strong>
 			<span class="muted">{client.tree.branches.length} branches · {client.tree.nodes.length} messages</span>
 			<span class="spacer"></span>
+			<button onclick={() => (view = "spatial")} title="Open every branch as a card on a canvas">Spatial</button>
 			<button onclick={() => (overview = overview === "full" ? "side" : "full")} title="Alt+O cycles side, full, hidden">{overview === "full" ? "Side" : "Full"}</button>
 			<button onclick={() => (overview = "hidden")}>Hide</button>
 		</div>
@@ -241,9 +404,17 @@
 	</section>
 
 	{#if overview === "hidden"}
-		<button class="show-overview" onclick={() => (overview = "side")} title="Alt+O">Overview</button>
+		<div class="show-overview">
+			<button onclick={() => (view = "spatial")} title="Open every branch as a card on a canvas">Spatial</button>
+			<button onclick={() => (overview = "side")} title="Alt+O">Overview</button>
+		</div>
 	{/if}
 </div>
+{/if}
+
+{#if palette}
+	<Palette items={commands} start={palette.start} close={() => (palette = undefined)} />
+{/if}
 
 {#if shareRequest}
 	<ShareDialog request={shareRequest} branches={client.tree.branches} submit={share} close={() => (shareRequest = undefined)} />
@@ -351,6 +522,12 @@
 		position: fixed;
 		top: 10px;
 		right: 12px;
+		display: flex;
+		gap: 6px;
+	}
+	.spatial-view {
+		flex: 1;
+		min-height: 0;
 	}
 	.toasts {
 		position: fixed;

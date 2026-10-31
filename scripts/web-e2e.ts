@@ -47,7 +47,9 @@ try {
 	await answerNode.click();
 	await page.locator(".svelte-flow__node-toolbar button", { hasText: "Branch" }).first().click();
 	await page.locator(".sidebar .branch").nth(1).waitFor();
-	await page.locator(".fork-line").waitFor();
+	// The fork point now offers both ways on: main's continuation and the new branch, which is open.
+	await page.locator(".switcher .lane.current").waitFor();
+	if ((await page.locator(".switcher .lane").count()) !== 2) throw new Error("expected two branches at the fork point");
 	ok("branched from a canvas node into a new branch");
 
 	await composer.fill("Side question: how do forks work?");
@@ -56,10 +58,23 @@ try {
 	ok("sent into the side branch");
 	await page.screenshot({ path: join(shots, "web-branching.png") });
 
-	// Main kept running while we were away: switch back and see its second answer.
-	await page.locator(".sidebar .branch").first().click();
+	// Main kept running while we were away: switch back at the fork point and see its second answer.
+	await page.locator(".switcher .lane:not(.current)").click();
+	await page.locator(".chat header .title", { hasText: "Main" }).waitFor();
 	await page.locator(".row.assistant").nth(1).waitFor({ timeout: 15_000 });
 	ok("main branch finished its answer while we were in the side branch");
+
+	// The command palette switches branches by name.
+	const side = (await page.locator(".sidebar .branch .name").nth(1).textContent())!;
+	await page.keyboard.press("Control+k");
+	await page.locator(".palette input").fill(side);
+	await page.keyboard.press("Enter");
+	await page.locator(".chat header .title", { hasText: side }).waitFor();
+	await page.keyboard.press("Control+k");
+	await page.locator(".palette input").fill("main");
+	await page.keyboard.press("Enter");
+	await page.locator(".chat header .title", { hasText: "Main" }).waitFor();
+	ok("command palette switches branches");
 
 	// Share a note with every branch from the sidebar.
 	await page.locator(".sidebar button", { hasText: "Note" }).click();
@@ -73,6 +88,14 @@ try {
 	await page.waitForFunction(() => document.querySelectorAll(".svelte-flow__node").length >= 6, null, { timeout: 15_000 });
 	const nodes = await page.locator(".svelte-flow__node").count();
 	ok(`canvas shows ${nodes} nodes across branches`);
+
+	// The spatial view shows every branch as a card and comes back to the same branch.
+	await page.locator(".overview-bar button", { hasText: "Spatial" }).click();
+	await page.waitForFunction(() => document.querySelectorAll(".spatial .svelte-flow__node").length >= 2);
+	await page.screenshot({ path: join(shots, "web-spatial.png") });
+	await page.locator(".spatial .back").click();
+	await page.locator(".chat header .title", { hasText: "Main" }).waitFor();
+	ok("spatial view and back");
 
 	await page.locator(".overview-bar button", { hasText: "Full" }).click();
 	await page.waitForTimeout(400);

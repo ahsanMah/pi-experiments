@@ -1,0 +1,123 @@
+/* Rail: a reading-first chat with the branch tree drawn as a transit line in its gutter.
+   Warm paper neutrals so the lane colours carry all the hue on the page. */
+:root {
+	--bg: #fbfaf7;
+	--panel: #f6f4ef;
+	--surface: #ffffff;
+	--surface-2: #f1eee8;
+	--border: #e7e3db;
+	--border-strong: #cfc9bd;
+	--text: #1d1c1a;
+	--text-2: #57534b;
+	--text-3: #8c867b;
+	--danger: #c8423b;
+	--ring: rgb(29 28 26 / 0.08);
+	--scrim: rgb(29 28 26 / 0.28);
+	/* Lane colour = hsl(branch hue, --lane-s, --lane-l); --lane-ink is the readable text tone. */
+	--lane-s: 62%;
+	--lane-l: 50%;
+	--lane-ink: 36%;
+	--lane-faded: 0.42;
+	--shadow-xs: 0 1px 2px rgb(40 30 10 / 0.06);
+	--shadow-lg: 0 1px 2px rgb(40 30 10 / 0.04), 0 8px 24px -6px rgb(40 30 10 / 0.12);
+	--shadow-xl: 0 2px 4px rgb(40 30 10 / 0.05), 0 24px 60px -12px rgb(40 30 10 / 0.28);
+	--serif: "Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+	--sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+	--mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	--measure: 680px;
+	color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--bg: #131312;
+		--panel: #171716;
+		--surface: #1c1c1a;
+		--surface-2: #252522;
+		--border: #2c2c29;
+		--border-strong: #45443f;
+		--text: #ecebe6;
+		--text-2: #b4b1a8;
+		--text-3: #7f7c73;
+		--danger: #f07a70;
+		--ring: rgb(236 235 230 / 0.1);
+		--scrim: rgb(0 0 0 / 0.5);
+		--lane-s: 70%;
+		--lane-l: 64%;
+		--lane-ink: 74%;
+		--lane-faded: 0.38;
+		--shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+		--shadow-lg: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 30px -8px rgb(0 0 0 / 0.55);
+		--shadow-xl: 0 2px 6px rgb(0 0 0 / 0.35), 0 28px 70px -12px rgb(0 0 0 / 0.7);
+		color-scheme: dark;
+	}
+}
+
+:root[data-theme="dark"] {
+	--bg: #131312;
+	--panel: #171716;
+	--surface: #1c1c1a;
+	--surface-2: #252522;
+	--border: #2c2c29;
+	--border-strong: #45443f;
+	--text: #ecebe6;
+	--text-2: #b4b1a8;
+	--text-3: #7f7c73;
+	--danger: #f07a70;
+	--ring: rgb(236 235 230 / 0.1);
+	--scrim: rgb(0 0 0 / 0.5);
+	--lane-s: 70%;
+	--lane-l: 64%;
+	--lane-ink: 74%;
+	--lane-faded: 0.38;
+	--shadow-xs: 0 1px 2px rgb(0 0 0 / 0.3);
+	--shadow-lg: 0 1px 2px rgb(0 0 0 / 0.3), 0 10px 30px -8px rgb(0 0 0 / 0.55);
+	--shadow-xl: 0 2px 6px rgb(0 0 0 / 0.35), 0 28px 70px -12px rgb(0 0 0 / 0.7);
+	color-scheme: dark;
+}
+
+html,
+body,
+#app {
+	margin: 0;
+	height: 100%;
+	background: var(--bg);
+	color: var(--text);
+	font: 14px/1.5 var(--sans);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	text-rendering: optimizeLegibility;
+	font-feature-settings: "cv11", "ss01";
+}
+
+#app {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+::selection {
+	background: rgb(120 140 255 / 0.25);
+}
+
+:focus-visible {
+	outline: 2px solid var(--text-2);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--border-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}

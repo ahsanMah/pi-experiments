@@ -1,0 +1,232 @@
+/* Mission Control: a dense, neutral board where color means status, not decoration. */
+:root {
+	--bg: #f7f7f8;
+	--panel: #ffffff;
+	--raised: #ffffff;
+	--sunken: #f0f0f2;
+	--hover: #f3f3f6;
+	--line: #e7e7eb;
+	--line-strong: #d6d6dc;
+	--text: #18181c;
+	--text-2: #60606b;
+	--text-3: #9898a3;
+	--accent: #5a52e0;
+	--accent-soft: rgb(90 82 224 / 0.1);
+	--accent-line: rgb(90 82 224 / 0.35);
+	--run: #2f7cf6;
+	--run-soft: rgb(47 124 246 / 0.1);
+	--ok: #1f9e63;
+	--ok-soft: rgb(31 158 99 / 0.1);
+	--warn: #c27a0e;
+	--warn-soft: rgb(194 122 14 / 0.12);
+	--err: #d93c55;
+	--err-soft: rgb(217 60 85 / 0.1);
+	--shadow: 0 1px 2px rgb(16 16 24 / 0.05), 0 1px 1px rgb(16 16 24 / 0.03);
+	--shadow-lg: 0 24px 60px -12px rgb(16 16 24 / 0.28), 0 0 0 1px rgb(16 16 24 / 0.06);
+	--scrim: rgb(20 20 28 / 0.28);
+	--mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+	color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme="light"]) {
+		--bg: #0d0d10;
+		--panel: #131317;
+		--raised: #1a1a20;
+		--sunken: #0f0f12;
+		--hover: #1b1b21;
+		--line: #222229;
+		--line-strong: #303039;
+		--text: #ebebf0;
+		--text-2: #9b9ba7;
+		--text-3: #64646f;
+		--accent: #8b84ff;
+		--accent-soft: rgb(139 132 255 / 0.14);
+		--accent-line: rgb(139 132 255 / 0.45);
+		--run: #5b9cff;
+		--run-soft: rgb(91 156 255 / 0.13);
+		--ok: #3ccf8a;
+		--ok-soft: rgb(60 207 138 / 0.12);
+		--warn: #f0a83a;
+		--warn-soft: rgb(240 168 58 / 0.13);
+		--err: #ff6b82;
+		--err-soft: rgb(255 107 130 / 0.13);
+		--shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+		--shadow-lg: 0 24px 70px -10px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.07);
+		--scrim: rgb(0 0 0 / 0.5);
+		color-scheme: dark;
+	}
+}
+
+:root[data-theme="dark"] {
+	--bg: #0d0d10;
+	--panel: #131317;
+	--raised: #1a1a20;
+	--sunken: #0f0f12;
+	--hover: #1b1b21;
+	--line: #222229;
+	--line-strong: #303039;
+	--text: #ebebf0;
+	--text-2: #9b9ba7;
+	--text-3: #64646f;
+	--accent: #8b84ff;
+	--accent-soft: rgb(139 132 255 / 0.14);
+	--accent-line: rgb(139 132 255 / 0.45);
+	--run: #5b9cff;
+	--run-soft: rgb(91 156 255 / 0.13);
+	--ok: #3ccf8a;
+	--ok-soft: rgb(60 207 138 / 0.12);
+	--warn: #f0a83a;
+	--warn-soft: rgb(240 168 58 / 0.13);
+	--err: #ff6b82;
+	--err-soft: rgb(255 107 130 / 0.13);
+	--shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+	--shadow-lg: 0 24px 70px -10px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.07);
+	--scrim: rgb(0 0 0 / 0.5);
+	color-scheme: dark;
+}
+
+html,
+body,
+#app {
+	margin: 0;
+	height: 100%;
+	background: var(--bg);
+	color: var(--text);
+	font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+	-webkit-font-smoothing: antialiased;
+}
+
+#app {
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+button,
+select,
+input,
+textarea {
+	font: inherit;
+	color: inherit;
+}
+
+button {
+	cursor: pointer;
+}
+
+/* The one button style the whole variant shares; components add size and tone. */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 10px;
+	border-radius: 7px;
+	border: 1px solid var(--line-strong);
+	background: var(--raised);
+	color: var(--text);
+	font-size: 12.5px;
+	font-weight: 500;
+	white-space: nowrap;
+	box-shadow: var(--shadow);
+	transition: background 0.12s, border-color 0.12s;
+}
+.btn:hover:not(:disabled) {
+	background: var(--hover);
+}
+.btn:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+.btn.primary {
+	background: var(--accent);
+	border-color: transparent;
+	color: white;
+}
+.btn.primary:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--accent) 88%, black);
+}
+.btn.danger {
+	color: var(--err);
+}
+.btn.danger:hover:not(:disabled) {
+	background: var(--err-soft);
+	border-color: color-mix(in srgb, var(--err) 40%, transparent);
+}
+.btn.ghost {
+	background: none;
+	border-color: transparent;
+	box-shadow: none;
+	color: var(--text-2);
+}
+.btn.ghost:hover:not(:disabled) {
+	background: var(--hover);
+	color: var(--text);
+}
+.btn.sm {
+	height: 24px;
+	padding: 0 8px;
+	font-size: 12px;
+	border-radius: 6px;
+}
+
+kbd {
+	display: inline-grid;
+	place-items: center;
+	min-width: 16px;
+	height: 17px;
+	padding: 0 4px;
+	box-sizing: border-box;
+	border-radius: 4px;
+	border: 1px solid var(--line-strong);
+	border-bottom-width: 2px;
+	background: var(--panel);
+	color: var(--text-2);
+	font: 500 10.5px/1 var(--mono);
+}
+
+.mono {
+	font-family: var(--mono);
+	font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+	outline: 2px solid var(--accent-line);
+	outline-offset: 1px;
+}
+
+::selection {
+	background: var(--accent-soft);
+}
+
+@keyframes pulse-ring {
+	0% {
+		box-shadow: 0 0 0 0 color-mix(in srgb, var(--run) 55%, transparent);
+	}
+	100% {
+		box-shadow: 0 0 0 6px transparent;
+	}
+}
+
+@keyframes blink {
+	50% {
+		opacity: 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
+
+.btn.ghost.danger:hover:not(:disabled) {
+	color: var(--err);
+	background: var(--err-soft);
+}

@@ -14,8 +14,12 @@
 		unshare: (noteId: string) => void;
 		accept: (id: string) => Promise<void>;
 		dismiss: (id: string) => void;
+		/** Open the command palette. */
+		commands: () => void;
+		theme: "system" | "light" | "dark";
+		cycleTheme: () => void;
 	};
-	let { tree, activeId, select, create, forkTip, newNote, unshare, accept, dismiss }: Props = $props();
+	let { tree, activeId, select, create, forkTip, newNote, unshare, accept, dismiss, commands, theme, cycleTheme }: Props = $props();
 
 	/** Branches in tree order: each fork listed under the branch it came from. */
 	const ordered = $derived.by(() => {
@@ -35,26 +39,73 @@
 		return out;
 	});
 
-	const targetLabel = (note: SharedNote) =>
-		note.to === "*" ? "all branches" : note.to.map((id) => tree.branches.find((b) => b.id === id)?.title ?? "another branch").join(", ");
+	// The list drawn as a line map (after the rail variant): each branch is a stop in its own
+	// column, and its parent's lane runs down from the parent's stop and curves into each fork.
+	// Lanes on the way from the root to the open branch are drawn bold.
+	const ROW = 30;
+	const col = (depth: number) => 10 + depth * 14;
+	type Lane = { d: string; hue: number; onPath: boolean };
+	const lanes = $derived.by(() => {
+		const rowOf = new Map(ordered.map((o, i) => [o.branch.id, i]));
+		const byId = new Map(tree.branches.map((b) => [b.id, b]));
+		// The open branch and its ancestors, each mapped to the child the path continues into.
+		const pathChild = new Map<number, number>();
+		for (let b = activeId === undefined ? undefined : byId.get(activeId); b?.parent !== undefined; b = byId.get(b.parent.conversationId))
+			pathChild.set(b.parent.conversationId, b.id);
+		const perRow: Lane[][] = ordered.map(() => []);
+		for (const [p, { branch: parent, depth }] of ordered.entries()) {
+			const kids = ordered.flatMap((o, i) => (o.branch.parent?.conversationId === parent.id ? [i] : []));
+			if (kids.length === 0) continue;
+			const last = kids.at(-1)!;
+			const x = col(depth);
+			const hue = branchHue(parent.id);
+			const pathRow = pathChild.has(parent.id) ? (rowOf.get(pathChild.get(parent.id)!) ?? -1) : -1;
+			const add = (row: number, d: string, onPath: boolean) => perRow[row]!.push({ d, hue, onPath });
+			add(p, `M${x} ${ROW / 2 + 5}V${ROW}`, pathRow >= 0);
+			for (let r = p + 1; r <= last; r++) {
+				// The path leaves this lane at its fork, so the lane is bold only down to there.
+				if (r < last) add(r, `M${x} 0V${ROW}`, r < pathRow);
+				// A fork: leave the lane and curve into the child's stop.
+				if (kids.includes(r)) add(r, `M${x} 0V${ROW / 2 - 6}q0 6 6 6H${col(depth + 1) - 5}`, r === pathRow);
+			}
+		}
+		return perRow;
+	});
+
+	const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
+
+	const titleOf = (id: number) => tree.branches.find((b) => b.id === id)?.title ?? "another branch";
+	/** Where a note came from and went: "from WAL to every branch", or "note to Main" for one typed in. */
+	const route = (note: SharedNote) => {
+		const to = note.to === "*" ? "every branch" : note.to.map(titleOf).join(", ");
+		return note.from === undefined ? `note to ${to}` : `from ${titleOf(note.from.conversationId)} to ${to}`;
+	};
 </script>
 
 <aside>
+	<div class="top">
+		<button class="commands" onclick={commands} title="Switch branches, search messages, run commands">
+			<span>Search or run a command…</span><kbd>{modKey}K</kbd>
+		</button>
+		<button class="theme" onclick={cycleTheme} title="Theme: {theme} (click to change)" aria-label="Theme: {theme}">
+			{theme === "light" ? "☀" : theme === "dark" ? "☾" : "◐"}
+		</button>
+	</div>
 	<div class="section-head">
 		<h2>Branches</h2>
 		<button onclick={forkTip} title="Branch from the end of the current branch">Fork</button>
 		<button onclick={create} title="Start an unrelated thread">New</button>
 	</div>
 	<ul class="branches">
-		{#each ordered as { branch, depth } (branch.id)}
+		{#each ordered as { branch, depth }, row (branch.id)}
 			<li>
-				<button
-					class="branch"
-					class:active={branch.id === activeId}
-					style="--hue: {branchHue(branch.id)}; padding-left: {8 + depth * 14}px"
-					onclick={() => select(branch.id)}
-				>
-					<span class="dot" class:busy={branch.busy}></span>
+				<button class="branch" class:active={branch.id === activeId} style="--hue: {branchHue(branch.id)}" onclick={() => select(branch.id)}>
+					<svg class="track" width={col(depth) + 8} height={ROW} aria-hidden="true">
+						{#each lanes[row] ?? [] as lane, i (i)}
+							<path d={lane.d} class="lane" class:on-path={lane.onPath} style="--lane: {lane.hue}" />
+						{/each}
+						<circle cx={col(depth)} cy={ROW / 2} r="4.5" class="stop" class:busy={branch.busy} />
+					</svg>
 					<span class="name">{branch.title}</span>
 					{#if branch.queued > 0}<span class="count" title="Queued inputs">+{branch.queued}</span>{/if}
 					{#if branch.sharedIn > 0}<span class="count" title="Shared notes it sees">⇄{branch.sharedIn}</span>{/if}
@@ -87,7 +138,7 @@
 				<details>
 					<summary>
 						<span class="note-title">{note.title}</span>
-						<span class="meta">{note.author === "model" ? "by a model" : "by you"} → {targetLabel(note)}</span>
+						<span class="meta">{route(note)}{note.author === "model" ? " · by a model" : ""}</span>
 					</summary>
 					<NoteCard {note} branches={tree.branches} openBranch={(id) => select(id)} {unshare} />
 				</details>
@@ -106,6 +157,40 @@
 		border-right: 1px solid var(--border);
 		padding: 10px 8px;
 		box-sizing: border-box;
+	}
+	.top {
+		display: flex;
+		gap: 4px;
+	}
+	.theme {
+		flex: none;
+		width: 30px;
+		padding: 0;
+		font-size: 14px;
+		color: var(--text-muted);
+	}
+	.commands {
+		display: flex;
+		flex: 1;
+		min-width: 0;
+		align-items: center;
+		gap: 6px;
+		padding: 5px 8px;
+		color: var(--text-muted);
+		font-size: 12px;
+		text-align: left;
+	}
+	.commands span {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.commands kbd {
+		font: 11px ui-monospace, monospace;
+		padding: 0 4px;
+		border: 1px solid var(--border);
+		border-radius: 4px;
 	}
 	.section-head {
 		display: flex;
@@ -134,9 +219,10 @@
 	.branch {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: 4px;
 		width: 100%;
-		padding: 6px 8px;
+		height: 30px;
+		padding: 0 8px 0 0;
 		border: none;
 		border-radius: 8px;
 		background: none;
@@ -148,18 +234,33 @@
 		background: var(--surface);
 	}
 	.branch.active {
-		background: var(--surface);
-		box-shadow: inset 3px 0 0 hsl(var(--hue) 60% 55%);
+		background: hsl(var(--hue) 60% 55% / 0.12);
 		font-weight: 600;
 	}
-	.dot {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
+	.track {
 		flex: none;
-		background: hsl(var(--hue) 60% 55%);
+		overflow: visible;
 	}
-	.dot.busy {
+	.lane {
+		fill: none;
+		stroke: hsl(var(--lane) 60% 55%);
+		stroke-width: 1.5;
+		opacity: 0.45;
+	}
+	.lane.on-path {
+		stroke-width: 2.5;
+		opacity: 1;
+	}
+	.stop {
+		fill: hsl(var(--hue) 60% 55%);
+		stroke: var(--surface-muted);
+		stroke-width: 2;
+	}
+	.branch.active .stop {
+		stroke: var(--surface);
+		r: 5.5;
+	}
+	.stop.busy {
 		animation: pulse 1s ease-in-out infinite;
 	}
 	@keyframes pulse {
