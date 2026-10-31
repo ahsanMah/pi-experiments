@@ -12,6 +12,19 @@ export type ContextPart = { label: string; tokens: number; detail?: { label: str
 const SECTION_NAMES: Record<string, string> = {
 	branches: "Branch info",
 	"shared-context": "Shared notes",
+	"project-context": "Project instructions",
+};
+
+/** pi's project context, one `<project_instructions path="…">` block per file, split so each file shows on its own. */
+const splitProjectContext = (text: string): { label: string; tokens: number }[] => {
+	const files = [...text.matchAll(/<project_instructions path="([^"]*)">[\s\S]*?<\/project_instructions>/g)];
+	if (files.length === 0) return [{ label: SECTION_NAMES["project-context"]!, tokens: text.length }];
+	const rest = files.reduce((left, m) => left - m[0].length, text.length);
+	return files.map((m, i) => {
+		const parts = m[1]!.split(/[\\/]/);
+		const label = parts.slice(-2).join("/");
+		return { label, tokens: m[0].length + (i === 0 ? rest : 0) };
+	});
 };
 
 const charsOf = (content: string | ContentBlock[] | undefined, include: (block: ContentBlock) => number): number =>
@@ -27,7 +40,7 @@ type SystemMessage = {
 };
 
 export const contextBreakdown = (view: ConversationView, actualTokens?: number): ContextPart[] => {
-	const sections = new Map<string, number>();
+	const sections = new Map<string, string>();
 	const tools = new Map<string, number>();
 	let user = 0;
 	let assistant = 0;
@@ -43,7 +56,7 @@ export const contextBreakdown = (view: ConversationView, actualTokens?: number):
 					const system = message as SystemMessage;
 					for (const [key, value] of Object.entries(system.sections ?? {})) {
 						sections.delete(key); // re-adding appends
-						if (value !== null) sections.set(key, value.length);
+						if (value !== null) sections.set(key, value);
 					}
 					for (const name of system.toolsRemoved ?? []) tools.delete(name);
 					for (const tool of system.toolsAdded ?? []) tools.set(tool.name, JSON.stringify(tool).length);
@@ -71,7 +84,9 @@ export const contextBreakdown = (view: ConversationView, actualTokens?: number):
 		}
 	}
 
-	const sectionDetail = [...sections].map(([key, chars]) => ({ label: SECTION_NAMES[key] ?? key, tokens: chars }));
+	const sectionDetail = [...sections].flatMap(([key, text]) =>
+		key === "project-context" ? splitProjectContext(text) : [{ label: SECTION_NAMES[key] ?? key, tokens: text.length }],
+	);
 	const toolDetail = [...tools].map(([name, chars]) => ({ label: name, tokens: chars })).sort((a, b) => b.tokens - a.tokens);
 	const parts: ContextPart[] = [
 		{ label: "System prompt", tokens: sectionDetail.reduce((s, d) => s + d.tokens, 0), detail: sectionDetail },

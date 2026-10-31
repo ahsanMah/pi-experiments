@@ -20,6 +20,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
 import { BranchesApp } from "./app.ts";
 import { connect } from "./connection.ts";
+import { createProjectContextExtension, loadContextFiles } from "./context-files.ts";
 import { echoProvider } from "./echo.ts";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -28,6 +29,7 @@ const host = process.env.HOST ?? "127.0.0.1";
 const database = process.env.PI_BRANCHES_DB ?? "./branches.sqlite";
 const cwd = process.env.PI_BRANCHES_CWD;
 const usePiConfig = process.env.PI_BRANCHES_PI_CONFIG !== "0";
+const useContextFiles = process.env.PI_BRANCHES_CONTEXT_FILES !== "0";
 const webRoot = resolve(import.meta.dirname, "../web/dist");
 const context = BACKGROUND_CONTEXT;
 
@@ -57,15 +59,23 @@ const loadModels = async (): Promise<ModelSetup> => {
 };
 
 const setup = await loadModels();
+
+// AGENTS.md / CLAUDE.md from pi's agent directory and the working directory's ancestors, like pi.
+const contextFiles = useContextFiles
+	? await loadContextFiles(
+			resolve(cwd ?? process.cwd()),
+			usePiConfig ? (await import("@earendil-works/pi-coding-agent")).getAgentDir() : undefined,
+		)
+	: [];
+const extensions = [...(cwd !== undefined ? [CodingTools] : []), createProjectContextExtension(contextFiles)];
 const app = await BranchesApp.open(
 	{
 		storage: await openNodeSqliteStorage(database),
 		models: setup.models,
 		model: setup.model,
 		...(setup.thinkingLevel !== undefined ? { thinkingLevel: setup.thinkingLevel } : {}),
-		...(cwd !== undefined
-			? { extensions: [CodingTools], env: ({ cwd: agentCwd }) => new NodeExecutionEnv({ cwd: agentCwd ?? cwd }) }
-			: {}),
+		extensions,
+		...(cwd !== undefined ? { env: ({ cwd: agentCwd }) => new NodeExecutionEnv({ cwd: agentCwd ?? cwd }) } : {}),
 	},
 	context,
 );
@@ -115,6 +125,7 @@ wss.on("connection", (socket: WebSocket) => {
 });
 
 server.listen(port, host, () => {
+	for (const file of contextFiles) console.log(`context file ${file.path}`);
 	console.log(`pi-branches on http://${host}:${port} (model ${setup.model} from ${setup.source}, storage ${database})`);
 });
 
