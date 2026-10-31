@@ -152,7 +152,6 @@
 					targetHandle: "note-in",
 					selectable: false,
 					focusable: false,
-					zIndex: 4,
 					data: { kind: "note", hue: 0, noteId: note.id, quiet: note.to === "*" } satisfies WireData,
 				});
 			}

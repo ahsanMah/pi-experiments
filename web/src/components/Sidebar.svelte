@@ -16,8 +16,10 @@
 		dismiss: (id: string) => void;
 		/** Open the command palette. */
 		commands: () => void;
+		theme: "system" | "light" | "dark";
+		cycleTheme: () => void;
 	};
-	let { tree, activeId, select, create, forkTip, newNote, unshare, accept, dismiss, commands }: Props = $props();
+	let { tree, activeId, select, create, forkTip, newNote, unshare, accept, dismiss, commands, theme, cycleTheme }: Props = $props();
 
 	/** Branches in tree order: each fork listed under the branch it came from. */
 	const ordered = $derived.by(() => {
@@ -72,14 +74,23 @@
 
 	const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 
-	const targetLabel = (note: SharedNote) =>
-		note.to === "*" ? "all branches" : note.to.map((id) => tree.branches.find((b) => b.id === id)?.title ?? "another branch").join(", ");
+	const titleOf = (id: number) => tree.branches.find((b) => b.id === id)?.title ?? "another branch";
+	/** Where a note came from and went: "from WAL to every branch", or "note to Main" for one typed in. */
+	const route = (note: SharedNote) => {
+		const to = note.to === "*" ? "every branch" : note.to.map(titleOf).join(", ");
+		return note.from === undefined ? `note to ${to}` : `from ${titleOf(note.from.conversationId)} to ${to}`;
+	};
 </script>
 
 <aside>
-	<button class="commands" onclick={commands} title="Switch branches, search messages, run commands">
-		<span>Search or run a command…</span><kbd>{modKey}K</kbd>
-	</button>
+	<div class="top">
+		<button class="commands" onclick={commands} title="Switch branches, search messages, run commands">
+			<span>Search or run a command…</span><kbd>{modKey}K</kbd>
+		</button>
+		<button class="theme" onclick={cycleTheme} title="Theme: {theme} (click to change)" aria-label="Theme: {theme}">
+			{theme === "light" ? "☀" : theme === "dark" ? "☾" : "◐"}
+		</button>
+	</div>
 	<div class="section-head">
 		<h2>Branches</h2>
 		<button onclick={forkTip} title="Branch from the end of the current branch">Fork</button>
@@ -127,7 +138,7 @@
 				<details>
 					<summary>
 						<span class="note-title">{note.title}</span>
-						<span class="meta">{note.author === "model" ? "by a model" : "by you"} → {targetLabel(note)}</span>
+						<span class="meta">{route(note)}{note.author === "model" ? " · by a model" : ""}</span>
 					</summary>
 					<NoteCard {note} branches={tree.branches} openBranch={(id) => select(id)} {unshare} />
 				</details>
@@ -147,11 +158,23 @@
 		padding: 10px 8px;
 		box-sizing: border-box;
 	}
+	.top {
+		display: flex;
+		gap: 4px;
+	}
+	.theme {
+		flex: none;
+		width: 30px;
+		padding: 0;
+		font-size: 14px;
+		color: var(--text-muted);
+	}
 	.commands {
 		display: flex;
+		flex: 1;
+		min-width: 0;
 		align-items: center;
 		gap: 6px;
-		width: 100%;
 		padding: 5px 8px;
 		color: var(--text-muted);
 		font-size: 12px;

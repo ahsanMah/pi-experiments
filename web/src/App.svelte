@@ -34,6 +34,21 @@
 			return null;
 		}
 	};
+	// Light, dark, or the system setting. A chosen theme sets data-theme on the root, which every
+	// stylesheet here (and the spatial view) already follows; "system" clears it again.
+	type Theme = "system" | "light" | "dark";
+	let theme = $state<Theme>((stored("theme") as Theme | null) ?? "system");
+	let themeSet = false;
+	$effect(() => {
+		if (theme !== "system") {
+			document.documentElement.dataset.theme = theme;
+			themeSet = true;
+		} else if (themeSet) delete document.documentElement.dataset.theme;
+		try {
+			localStorage.setItem("theme", theme);
+		} catch {}
+	});
+	const cycleTheme = () => (theme = theme === "system" ? (dark ? "light" : "dark") : theme === "dark" ? "light" : "system");
 	let overview = $state<OverviewMode>((stored("overview") as OverviewMode | null) ?? "side");
 	let panelWidth = $state(Number(stored("panelWidth") ?? 460));
 	// Follow an explicit data-theme on the root (set by a host page), else the system setting.
@@ -210,6 +225,7 @@
 				? { id: "spatial", icon: "▦", label: "Open the spatial view", detail: "every branch as a card on a canvas", keywords: "canvas tree cards", run: () => void (view = "spatial") }
 				: { id: "chat", icon: "☰", label: "Back to the chat view", keywords: "conversation", run: () => toChat() },
 		);
+		app({ id: "theme", icon: "◐", label: "Change theme", detail: `now ${theme}`, keywords: "light dark appearance mode", run: () => void cycleTheme() });
 		app({ id: "new", icon: "＋", label: "New thread", detail: "an unrelated conversation", keywords: "create root branch", run: newThread });
 		app({ id: "note", icon: "✦", label: "Write a note to…", keywords: "share context", run: notePage });
 		if (view === "chat")
@@ -305,6 +321,8 @@
 			accept={acceptSuggestion}
 			dismiss={dismissSuggestion}
 			commands={() => (palette = {})}
+			{theme}
+			{cycleTheme}
 		/>
 	</div>
 
