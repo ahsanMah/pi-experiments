@@ -1,10 +1,10 @@
 // The active branch's transcript: committed entries of its ConversationView, then the
 // live partial answer and tool round from docs["pi.live"]. Entries are immutable, so
 // each entry's components are built once and reused across commits.
-import { type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import type { BranchInfo, BranchSuggestion, SharedNote } from "../shared/protocol.ts";
 import type { ConversationView, LiveToolSlot, ViewEntry } from "./client.ts";
-import { markdownTheme, style } from "./theme.ts";
+import { currentTheme, markdownTheme, style } from "./theme.ts";
 
 type Block = { type: string; text?: string; thinking?: string; name?: string; arguments?: unknown };
 
@@ -22,11 +22,84 @@ const brief = (value: unknown, max = 80): string => {
 	return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 };
 
-const toolCallLine = (block: Block): Component =>
-	new TruncatedText(style.yellow(`  ⚙ ${block.name ?? "tool"} `) + style.dim(brief(block.arguments)), 1, 0);
+/** How collapsible parts of the transcript are shown; toggled from the keyboard. */
+export type TranscriptOptions = { showThinking: boolean; expandTools: boolean };
+
+const COLLAPSED_TOOL_LINES = 6;
+const MAX_TOOL_LINES = 400;
+
+/** Lines of a tool call's arguments: `key: value` per field, values cut short unless expanded. */
+const argumentLines = (args: unknown, expanded: boolean): string[] => {
+	if (args === undefined || args === null) return [];
+	if (typeof args !== "object" || Array.isArray(args)) return (typeof args === "string" ? args : JSON.stringify(args, null, 2)).split("\n");
+	const lines: string[] = [];
+	for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
+		const text = typeof value === "string" ? value : JSON.stringify(value, null, expanded ? 2 : undefined) ?? "";
+		const valueLines = text.split("\n");
+		if (!expanded) {
+			const more = valueLines.length > 1 ? style.dim(` (+${valueLines.length - 1} lines)`) : "";
+			lines.push(`${style.cyan(key)}: ${brief(valueLines[0], 100)}${more}`);
+		} else if (valueLines.length === 1) {
+			lines.push(`${style.cyan(key)}: ${text}`);
+		} else {
+			lines.push(`${style.cyan(key)}:`, ...valueLines.map((line) => `  ${line}`));
+		}
+	}
+	return lines;
+};
+
+/** A boxed block: a header line over body lines, on the tool background. */
+const toolBox = (header: string, body: string[], bg: (text: string) => string): Component => {
+	const box = new Box(1, 0, bg);
+	box.addChild(new TruncatedText(header, 0, 0));
+	if (body.length > 0) box.addChild(new Text(body.join("\n"), 0, 0));
+	return box;
+};
+
+const toolCallBlock = (block: Block, options: TranscriptOptions, status?: string): Component =>
+	toolBox(
+		`${status ?? style.yellow("⚙")} ${style.bold(style.yellow(block.name ?? "tool"))}`,
+		argumentLines(block.arguments, options.expandTools).map((line) => style.gray(line)),
+		style.toolBg,
+	);
+
+/** A tool's output, its first lines only while collapsed. */
+const outputLines = (output: string, expanded: boolean): string[] => {
+	const lines = output.replace(/\s+$/, "").split("\n");
+	if (lines.length === 1 && lines[0] === "") return [style.dim("(no output)")];
+	const keep = expanded ? MAX_TOOL_LINES : COLLAPSED_TOOL_LINES;
+	if (lines.length <= keep) return lines;
+	const hint = expanded ? "" : " · ctrl+x to expand";
+	return [...lines.slice(0, keep), style.dim(`… ${lines.length - keep} more lines${hint}`)];
+};
+
+const toolResultBlock = (name: string, output: string, isError: boolean, options: TranscriptOptions): Component =>
+	toolBox(
+		isError ? style.red(`↳ ${name} failed`) : style.green(`↳ ${name}`),
+		outputLines(output, options.expandTools).map((line) => style.gray(line)),
+		isError ? style.toolErrorBg : style.toolBg,
+	);
+
+/** Thinking: a one-line summary while collapsed, the full text while shown. */
+const thinkingBlock = (thinking: string, options: TranscriptOptions): Component[] => {
+	const lines = thinking.trim().split("\n").length;
+	if (!options.showThinking) {
+		return [new TruncatedText(style.dim(style.italic(`  ▸ Thinking · ${lines} line${lines === 1 ? "" : "s"} · ctrl+t to show`)), 1, 0)];
+	}
+	return [
+		new TruncatedText(style.dim(style.italic("  ▾ Thinking · ctrl+t to hide")), 1, 0),
+		new Markdown(thinking, 3, 0, markdownTheme, { color: style.dim, italic: true }),
+	];
+};
+
+const thinkingOf = (blocks: Block[]): string =>
+	blocks
+		.filter((block) => block.type === "thinking")
+		.map((block) => block.thinking ?? "")
+		.join("");
 
 /** Components for one committed entry; empty for entries the transcript doesn't show. */
-const renderEntry = (entry: ViewEntry): Component[] => {
+const renderEntry = (entry: ViewEntry, options: TranscriptOptions): Component[] => {
 	const message = entry.model?.[0];
 	switch (entry.kind) {
 		case "pi.user":
@@ -34,18 +107,15 @@ const renderEntry = (entry: ViewEntry): Component[] => {
 		case "pi.assistant": {
 			const parts: Component[] = [];
 			const blocks = blocksOf(message?.content);
-			const thinking = blocks.filter((block) => block.type === "thinking").map((block) => block.thinking ?? "").join("");
-			if (thinking.trim() !== "") parts.push(new Markdown(thinking, 1, 0, markdownTheme, { color: style.dim, italic: true }));
+			const thinking = thinkingOf(blocks);
+			if (thinking.trim() !== "") parts.push(new Spacer(1), ...thinkingBlock(thinking, options));
 			const text = textOf(message?.content);
 			if (text.trim() !== "") parts.push(new Spacer(1), new Markdown(text, 1, 0, markdownTheme));
-			for (const block of blocks) if (block.type === "toolCall") parts.push(toolCallLine(block));
+			for (const block of blocks) if (block.type === "toolCall") parts.push(new Spacer(1), toolCallBlock(block, options));
 			return parts;
 		}
-		case "pi.tool-result": {
-			const result = textOf(message?.content);
-			const mark = message?.isError === true ? style.red("  ↳ ") : style.dim("  ↳ ");
-			return [new TruncatedText(mark + style.dim(`${message?.toolName ?? "result"}: ${brief(result, 120)}`), 1, 0)];
-		}
+		case "pi.tool-result":
+			return [toolResultBlock(String(message?.toolName ?? "result"), textOf(message?.content), message?.isError === true, options)];
 		case "branches.shared":
 			return []; // drawn by sharedMarker, since a note can be unshared later
 		case "pi.compaction":
@@ -71,15 +141,29 @@ const sharedMarker = (entry: ViewEntry, notes: readonly SharedNote[]): Component
 	return [new Spacer(1), head, new Markdown(preview + rest, 4, 0, markdownTheme, { color: style.dim })];
 };
 
-const liveToolLine = (slot: LiveToolSlot, spinner: string): Component => {
+const liveToolBlock = (slot: LiveToolSlot, spinner: string, options: TranscriptOptions): Component => {
 	const icon = slot.status === "done" ? style.green("✓") : style.yellow(spinner);
-	const output = typeof slot.output === "string" && slot.output.trim() !== "" ? style.dim(` ${brief(slot.output.split("\n").at(-1), 80)}`) : "";
-	return new TruncatedText(`  ${icon} ${style.yellow(slot.name ?? "tool")}${output}`, 1, 0);
+	const output = typeof slot.output === "string" && slot.output.trim() !== "" ? outputLines(slot.output, options.expandTools) : [];
+	// Live output is a stream: while collapsed, its latest lines matter more than its first.
+	const tail = options.expandTools || typeof slot.output !== "string" ? output : slot.output.replace(/\s+$/, "").split("\n").slice(-COLLAPSED_TOOL_LINES);
+	return toolBox(`${icon} ${style.bold(style.yellow(slot.name ?? "tool"))}`, tail.map((line) => style.gray(line)), style.toolBg);
 };
 
 export class TranscriptView extends Container {
 	readonly #cache = new Map<number, Component[]>();
 	#conversationId: number | undefined;
+	#options: TranscriptOptions = { showThinking: false, expandTools: false };
+	#theme = currentTheme();
+
+	get options(): TranscriptOptions {
+		return this.#options;
+	}
+
+	/** Change what is collapsed; committed entries are rebuilt on the next update. */
+	setOptions(options: Partial<TranscriptOptions>): void {
+		this.#options = { ...this.#options, ...options };
+		this.#cache.clear();
+	}
 
 	/** Rebuild from the view; `branches` names the parent at the fork boundary. */
 	update(
@@ -90,7 +174,8 @@ export class TranscriptView extends Container {
 		suggestions: readonly BranchSuggestion[],
 		spinner: string,
 	): void {
-		if (conversationId !== this.#conversationId) {
+		if (conversationId !== this.#conversationId || this.#theme !== currentTheme()) {
+			this.#theme = currentTheme();
 			this.#cache.clear();
 			this.#conversationId = conversationId;
 		}
@@ -119,7 +204,7 @@ export class TranscriptView extends Container {
 			}
 			let parts = this.#cache.get(entry.id);
 			if (parts === undefined) {
-				parts = renderEntry(entry);
+				parts = renderEntry(entry, this.#options);
 				this.#cache.set(entry.id, parts);
 			}
 			for (const part of parts) this.addChild(part);
@@ -128,14 +213,23 @@ export class TranscriptView extends Container {
 		const live = view.docs["pi.live"];
 		const partial = live?.generation?.message?.content;
 		if (partial !== undefined) {
+			const thinking = thinkingOf(blocksOf(partial));
+			if (thinking.trim() !== "") {
+				this.addChild(new Spacer(1));
+				for (const part of thinkingBlock(thinking, this.#options)) this.addChild(part);
+			}
 			const text = textOf(partial);
 			if (text.trim() !== "") {
 				this.addChild(new Spacer(1));
 				this.addChild(new Markdown(text, 1, 0, markdownTheme));
 			}
-			for (const block of blocksOf(partial)) if (block.type === "toolCall") this.addChild(toolCallLine(block));
+			for (const block of blocksOf(partial)) {
+				if (block.type !== "toolCall") continue;
+				this.addChild(new Spacer(1));
+				this.addChild(toolCallBlock(block, this.#options));
+			}
 		}
-		for (const slot of live?.tools ?? []) if (slot.status !== "done") this.addChild(liveToolLine(slot, spinner));
+		for (const slot of live?.tools ?? []) if (slot.status !== "done") this.addChild(liveToolBlock(slot, spinner, this.#options));
 		if (live?.generation?.retry !== undefined) {
 			this.addChild(new TruncatedText(style.red(`  retrying: ${brief(live.generation.retry.error, 100)}`), 1, 0));
 		}
