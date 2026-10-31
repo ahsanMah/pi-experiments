@@ -81,6 +81,8 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 				return app.rename(message.conversationId as ConversationId, message.title, context);
 			case "delete":
 				return app.remove(message.conversationId as ConversationId, context);
+			case "restore":
+				return app.restore(message.conversationId as ConversationId, context);
 			case "configure":
 				return app.configure(message.conversationId as ConversationId, message.model, context);
 			case "share": {

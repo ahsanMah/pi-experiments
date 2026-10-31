@@ -8,7 +8,7 @@
 import type { Context } from "@earendil-works/chord/context";
 import { InboxDoc, LiveDoc, UsageDoc } from "@earendil-works/pi-durable";
 import type { ConversationId, ConversationRecord, Cursor, EntryId, EntryRecord, Harness } from "@earendil-works/pi-durable";
-import type { BranchInfo, NodeRole, TreeIndex, TreeNode } from "../shared/protocol.ts";
+import type { BranchInfo, DeletedBranch, NodeRole, TreeIndex, TreeNode } from "../shared/protocol.ts";
 import { BranchMetaDoc, notesFor, SHARED_ENTRY, SharedNotesDoc, SuggestionsDoc } from "./branches.ts";
 
 const PREVIEW_CHARS = 160;
@@ -59,6 +59,38 @@ export const classify = (entry: EntryRecord): Classified => {
 		default:
 			return undefined;
 	}
+};
+
+/**
+ * Deleted branches that can be restored on their own: marked deleted, with a parent that is still shown.
+ * One deleted inside a deleted subtree is listed once its ancestor is restored.
+ */
+const deletedRoots = (
+	records: readonly ConversationRecord[],
+	meta: Record<string, { title: string; deletedAt?: number }>,
+): DeletedBranch[] => {
+	const hidden = new Set<ConversationId>();
+	const roots: ConversationRecord[] = [];
+	const rootOf = new Map<ConversationId, ConversationId>();
+	for (const record of records) {
+		const parentHidden = record.parent !== undefined && hidden.has(record.parent.conversationId);
+		if (meta[String(record.id)]?.deletedAt !== undefined || parentHidden) {
+			hidden.add(record.id);
+			if (parentHidden) rootOf.set(record.id, rootOf.get(record.parent!.conversationId)!);
+			else {
+				roots.push(record);
+				rootOf.set(record.id, record.id);
+			}
+		}
+	}
+	return roots
+		.map((record) => ({
+			id: record.id as unknown as number,
+			title: meta[String(record.id)]?.title || `Branch ${record.id}`,
+			deletedAt: meta[String(record.id)]!.deletedAt!,
+			forks: [...rootOf.values()].filter((root) => root === record.id).length - 1,
+		}))
+		.sort((a, b) => b.deletedAt - a.deletedAt);
 };
 
 type ConversationCache = {
@@ -220,6 +252,7 @@ export class TreeIndexer {
 			nodes,
 			notes: board,
 			suggestions: suggestions.filter((s) => !hidden.has(s.conversationId as unknown as ConversationId)),
+			deleted: deletedRoots(caches.map((c) => c.record), meta),
 		};
 	}
 }

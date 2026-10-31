@@ -225,6 +225,10 @@ try {
 		!pruned.branches.some((b) => b.title.startsWith("Doomed")) && !pruned.nodes.some((n) => n.conversationId === doomed.conversationId),
 		"a deleted branch takes its forks and nodes with it",
 	);
+	assert(pruned.deleted.length === 1 && pruned.deleted[0]!.forks === 1, "the deleted branch is listed once, with its fork");
+	await request({ t: "restore", conversationId: doomed.conversationId });
+	const restored = await until((tree) => tree.branches.length === before + 2, "restored branch and its fork return");
+	assert(restored.deleted.length === 0, "nothing left to restore");
 	console.log("smoke test passed");
 } finally {
 	socket.close();

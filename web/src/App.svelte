@@ -60,6 +60,8 @@
 	let dark = $state(readTheme());
 	$effect(() => {
 		const update = () => (dark = readTheme());
+		// The saved theme may have been applied before this observer existed (on load); catch up.
+		update();
 		query.addEventListener("change", update);
 		const observer = new MutationObserver(update);
 		observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
@@ -199,6 +201,22 @@
 			],
 		};
 	};
+	const restorePage = (): PalettePage => ({
+		kind: "list",
+		title: "Restore a deleted branch",
+		placeholder: "Search deleted branches…",
+		items: client.tree.deleted.map((d) => ({
+			id: `restore:${d.id}`,
+			icon: "↺",
+			label: d.title,
+			group: "Deleted",
+			detail: `${new Date(d.deletedAt).toLocaleString()}${d.forks > 0 ? ` · with ${d.forks} fork${d.forks === 1 ? "" : "s"}` : ""}`,
+			run: async () => {
+				await client.request({ t: "restore", conversationId: d.id });
+				toChat(d.id);
+			},
+		})),
+	});
 	const modelPage = (branch: BranchInfo): PalettePage => ({
 		kind: "list",
 		title: `Model for ${branch.title}`,
@@ -243,6 +261,7 @@
 		);
 		app({ id: "theme", icon: "◐", label: "Change theme", detail: `now ${theme}`, keywords: "light dark appearance mode", run: () => void cycleTheme() });
 		app({ id: "new", icon: "＋", label: "New thread", detail: "an unrelated conversation", keywords: "create root branch", run: newThread });
+		if (client.tree.deleted.length > 0) app({ id: "restore", icon: "↺", label: "Restore a deleted branch…", detail: `${client.tree.deleted.length} deleted`, keywords: "undelete undo trash recover", run: restorePage });
 		app({ id: "note", icon: "✦", label: "Write a note to…", keywords: "share context", run: notePage });
 		if (view === "chat")
 			app({

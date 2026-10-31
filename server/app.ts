@@ -44,7 +44,7 @@ export class BranchesApp {
 	readonly #models: Models;
 	readonly #agent: AgentChange;
 	readonly #listeners = new Set<(tree: TreeIndex) => void>();
-	#tree: TreeIndex = { branches: [], nodes: [], notes: [], suggestions: [] };
+	#tree: TreeIndex = { branches: [], nodes: [], notes: [], suggestions: [], deleted: [] };
 	#rebuild: { timer?: ReturnType<typeof setTimeout>; running?: Promise<void>; again?: boolean } = {};
 
 	private constructor(harness: Harness, models: Models, defaultModel: string, agent: AgentChange, available: string[]) {
@@ -211,6 +211,15 @@ export class BranchesApp {
 			const existing = meta.branches[String(id)];
 			if (existing === undefined) meta.branches[String(id)] = { title: "", createdAt: Date.now(), deletedAt: Date.now() };
 			else existing.deletedAt = Date.now();
+		}, context);
+		await this.rebuildNow(context);
+	}
+
+	async restore(id: ConversationId, context: Context): Promise<void> {
+		if (!this.#tree.deleted.some((d) => d.id === (id as unknown as number))) throw new Error(`Branch ${id} is not deleted, or sits inside a deleted branch`);
+		await this.harness.commit(async (tx) => {
+			const entry = (await tx.doc(BranchMetaDoc)).branches[String(id)];
+			if (entry !== undefined) delete entry.deletedAt;
 		}, context);
 		await this.rebuildNow(context);
 	}
