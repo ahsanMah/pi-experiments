@@ -126,8 +126,8 @@ try {
 	assert(true, "a share with every branch marks each branch");
 
 	// A summary covers only the source's history after its lowest common ancestor with the target.
-	const summarize = async (from: number, to: number[]) => {
-		const { noteIds } = await request<{ noteIds: string[] }>({ t: "share", mode: "summary", from: { conversationId: from }, to });
+	const summarize = async (from: number, to: number[], mode: "summary" | "transcript" = "summary") => {
+		const { noteIds } = await request<{ noteIds: string[] }>({ t: "share", mode, from: { conversationId: from }, to });
 		const tree = await until((t) => noteIds.every((id) => t.notes.some((n) => n.id === id)), "summary notes");
 		// The first line names the shared point; the summary body follows it.
 		return noteIds.map((id) => {
@@ -185,10 +185,26 @@ try {
 	);
 
 	// Malformed input gets an error and the server keeps serving.
+	// Transcripts take the same cut.
+	const [transcriptFromSide] = await summarize(side, [main.id], "transcript");
+	assert(
+		transcriptFromSide!.text.startsWith("Branch") &&
+			transcriptFromSide!.body.includes("User: Side question") &&
+			!transcriptFromSide!.body.includes("User: What is a durable harness?"),
+		`a fork's transcript for its parent leaves out what they share:\n${transcriptFromSide!.text.slice(0, 600)}`,
+	);
+
 	// Targets with different common ancestors get separate notes; an unrelated root gets the whole history.
 	await until((t) => t.branches.every((b) => !b.busy), "idle before split summary");
 	const { conversationId: root2 } = await request<{ conversationId: number }>({ t: "new", title: "Unrelated" });
 	const split = await summarize(main.id, [side, root2]);
+	const splitTranscript = await summarize(main.id, [side, root2], "transcript");
+	assert(
+		splitTranscript.length === 2 &&
+			splitTranscript.some((n) => n.text.startsWith("User: What is a durable harness?")) &&
+			splitTranscript.some((n) => n.text.startsWith("Branch") && !n.body.includes("User: What is a durable harness?")),
+		"transcripts to targets with different common ancestors are cut separately",
+	);
 	assert(
 		split.length === 2 && split.some((n) => n.text.includes("durable harness") && !n.text.startsWith("Branch")),
 		"targets with different common ancestors get separate notes; an unrelated branch gets the whole history",

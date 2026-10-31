@@ -290,8 +290,7 @@ export class BranchesApp {
 
 	/** A branch's history through `at` as readable text, for summaries, read_branch, and transcript shares. */
 	async transcript(id: ConversationId, at: EntryId | undefined, context: Context): Promise<string> {
-		const entries = await this.indexer.history(id, at, context);
-		return entries.map(renderEntry).filter((line) => line !== "").join("\n\n");
+		return renderEntries(await this.indexer.history(id, at, context));
 	}
 
 	async addNote(note: Omit<SharedNote, "id" | "createdAt">, context: Context): Promise<SharedNote> {
@@ -353,24 +352,25 @@ export class BranchesApp {
 			return [await note(request.text, request.to as SharedNote["to"])];
 		}
 		if (from === undefined) throw new Error(`A ${mode} share needs a source branch`);
-		if (mode === "transcript") {
-			return [await note(await this.transcript(from.conversationId, from.at, context), request.to as SharedNote["to"])];
-		}
-		// A summary covers only what the source has that each target doesn't: its history after their
-		// lowest common ancestor. Targets with the same LCA share one note. A share with every branch
-		// also reaches branches made later, which may fork anywhere, so it summarizes the whole history.
+		// A summary or transcript covers only what the source has that each target doesn't: its history
+		// after their lowest common ancestor. Targets with the same LCA share one note. A share with every
+		// branch also reaches branches made later, which may fork anywhere, so it takes the whole history.
 		const history = await this.indexer.history(from.conversationId, from.at, context);
-		if (request.to === "*") return [await note(await this.summarizeAfter(from.conversationId, history, 0, request.text, context), "*")];
+		const textAfter = (shared: number) =>
+			mode === "transcript"
+				? this.transcriptAfter(from.conversationId, history, shared)
+				: this.summarizeAfter(from.conversationId, history, shared, request.text, context);
+		if (request.to === "*") return [await note(await textAfter(0), "*")];
 		const groups = new Map<number, ConversationId[]>();
 		for (const target of request.to) {
 			const shared = await this.#sharedPrefix(history, target, context);
 			if (shared === history.length) continue; // the target already has all of it
 			groups.set(shared, [...(groups.get(shared) ?? []), target]);
 		}
-		if (groups.size === 0) throw new Error("Those branches already have this history; there is nothing to summarize");
+		if (groups.size === 0) throw new Error(`Those branches already have this history; there is nothing to ${mode === "summary" ? "summarize" : "share"}`);
 		const notes: SharedNote[] = [];
 		for (const [shared, targets] of groups) {
-			const text = await this.summarizeAfter(from.conversationId, history, shared, request.text, context);
+			const text = await textAfter(shared);
 			notes.push(await note(text, targets as unknown as SharedNote["to"]));
 		}
 		return notes;
@@ -385,9 +385,29 @@ export class BranchesApp {
 	}
 
 	/**
-	 * Summarize `history` after its first `shared` entries, which the reader already has. Those become one
-	 * line naming the last message both sides share, instead of being summarized again.
+	 * The line that stands in for the first `shared` entries of `history`, which the reader already has:
+	 * it names the last message both sides share. Undefined when they share nothing shown.
 	 */
+	#sharedLine(id: ConversationId, history: readonly EntryRecord[], shared: number): string | undefined {
+		const last = history
+			.slice(0, shared)
+			.reverse()
+			.find((entry) => renderEntry(entry) !== "");
+		if (last === undefined) return undefined;
+		const quote = (text: string) => `"${text.replace(/\s+/g, " ").trim()}"`;
+		const preview = this.#tree.nodes.find((node) => node.id === (last.id as unknown as number))?.preview ?? clip(renderEntry(last), 120);
+		const title = this.#tree.branches.find((b) => b.id === (id as unknown as number))?.title;
+		return `Branch ${id}${title !== undefined ? `, ${quote(title)},` : ""} shares your history up to ${quote(preview)}; this covers what it added after that.`;
+	}
+
+	/** `history` after its first `shared` entries as readable text, under the shared-history line. */
+	transcriptAfter(id: ConversationId, history: readonly EntryRecord[], shared: number): string {
+		const origin = this.#sharedLine(id, history, shared);
+		const text = renderEntries(origin === undefined ? history : history.slice(shared));
+		return origin === undefined ? text : `${origin}\n\n${text}`;
+	}
+
+	/** Summarize `history` after its first `shared` entries, under the shared-history line. */
 	async summarizeAfter(
 		id: ConversationId,
 		history: readonly EntryRecord[],
@@ -395,17 +415,9 @@ export class BranchesApp {
 		instructions: string | undefined,
 		context: Context,
 	): Promise<string> {
-		const render = (list: readonly EntryRecord[]) => list.map(renderEntry).filter((line) => line !== "").join("\n\n");
-		const last = history
-			.slice(0, shared)
-			.reverse()
-			.find((entry) => renderEntry(entry) !== "");
-		if (last === undefined) return this.summarize(id, render(history), instructions, context);
-		const quote = (text: string) => `"${text.replace(/\s+/g, " ").trim()}"`;
-		const preview = this.#tree.nodes.find((node) => node.id === (last.id as unknown as number))?.preview ?? clip(renderEntry(last), 120);
-		const title = this.#tree.branches.find((b) => b.id === (id as unknown as number))?.title;
-		const origin = `Branch ${id}${title !== undefined ? `, ${quote(title)},` : ""} shares your history up to ${quote(preview)}; this covers what it added after that.`;
-		const summary = await this.summarize(id, render(history.slice(shared)), instructions, context, origin);
+		const origin = this.#sharedLine(id, history, shared);
+		if (origin === undefined) return this.summarize(id, renderEntries(history), instructions, context);
+		const summary = await this.summarize(id, renderEntries(history.slice(shared)), instructions, context, origin);
 		return `${origin}\n\n${summary}`;
 	}
 
@@ -446,6 +458,8 @@ export class BranchesApp {
 		await this.harness.close(context);
 	}
 }
+
+const renderEntries = (entries: readonly EntryRecord[]): string => entries.map(renderEntry).filter((line) => line !== "").join("\n\n");
 
 const clip = (text: string, length: number): string => {
 	const flat = text.replace(/\s+/g, " ").trim();
