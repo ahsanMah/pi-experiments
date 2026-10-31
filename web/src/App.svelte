@@ -184,6 +184,21 @@
 		confirmLabel: "Rename",
 		submit: async (title) => void (await client.request({ t: "rename", conversationId: branch.id, title })),
 	});
+	/** Confirm before deleting: the branch goes with everything forked from it. */
+	const deletePage = (branch: BranchInfo): PalettePage => {
+		const doomed = new Set([branch.id]);
+		for (const b of client.tree.branches) if (b.parent !== undefined && doomed.has(b.parent.conversationId)) doomed.add(b.id);
+		const forks = doomed.size - 1;
+		return {
+			kind: "list",
+			title: `Delete ${branch.title}${forks > 0 ? ` and ${forks} branch${forks === 1 ? "" : "es"} forked from it` : ""}?`,
+			placeholder: "This cannot be undone from here",
+			items: [
+				{ id: "delete-confirm", icon: "✕", label: `Delete ${branch.title}`, group: "Confirm", ...(forks > 0 ? { detail: `with ${forks} fork${forks === 1 ? "" : "s"}` } : {}), run: async () => void (await client.request({ t: "delete", conversationId: branch.id })) },
+				{ id: "delete-cancel", icon: "↩", label: "Keep it", group: "Confirm", run: () => {} },
+			],
+		};
+	};
 	const modelPage = (branch: BranchInfo): PalettePage => ({
 		kind: "list",
 		title: `Model for ${branch.title}`,
@@ -216,6 +231,7 @@
 			act({ id: "share-summary", icon: "⇄", label: `Share a summary of ${a.title} to…`, keywords: "context", run: () => sharePage(a, "summary") });
 			act({ id: "share-transcript", icon: "⇄", label: `Share the transcript of ${a.title} to…`, keywords: "context", run: () => sharePage(a, "transcript") });
 			act({ id: "rename", icon: "✎", label: "Rename…", detail: a.title, run: () => renamePage(a) });
+			act({ id: "delete", icon: "✕", label: "Delete branch…", detail: a.title, keywords: "remove trash discard", run: () => deletePage(a) });
 			act({ id: "model", icon: "◇", label: "Change model…", detail: a.model, run: () => modelPage(a) });
 			if (a.busy) act({ id: "stop", icon: "■", label: `Stop ${a.title}`, keywords: "abort cancel", run: () => void client.request({ t: "abort", conversationId: a.id }) });
 		}

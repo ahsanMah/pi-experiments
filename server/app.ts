@@ -191,6 +191,30 @@ export class BranchesApp {
 		return conversation.id;
 	}
 
+	/**
+	 * Delete a branch and every branch forked from it. pi-durable has no way to drop a conversation,
+	 * so they are marked deleted and leave the tree; their runs are stopped. The last branch stays.
+	 */
+	async remove(id: ConversationId, context: Context): Promise<void> {
+		const tree = this.#tree;
+		if (!tree.branches.some((b) => b.id === (id as unknown as number))) throw new Error(`No branch ${id}`);
+		const doomed = new Set<number>([id as unknown as number]);
+		for (const branch of tree.branches) {
+			if (branch.parent !== undefined && doomed.has(branch.parent.conversationId)) doomed.add(branch.id);
+		}
+		if (doomed.size >= tree.branches.length) throw new Error("This is the only thread left; start another before deleting it");
+		for (const branch of tree.branches) {
+			if (doomed.has(branch.id) && branch.busy) await (await this.#conversation(branch.id as unknown as ConversationId, context)).abort(context);
+		}
+		await this.harness.commit(async (tx) => {
+			const meta = await tx.doc(BranchMetaDoc);
+			const existing = meta.branches[String(id)];
+			if (existing === undefined) meta.branches[String(id)] = { title: "", createdAt: Date.now(), deletedAt: Date.now() };
+			else existing.deletedAt = Date.now();
+		}, context);
+		await this.rebuildNow(context);
+	}
+
 	async configure(id: ConversationId, model: string, context: Context): Promise<void> {
 		await (await this.#conversation(id, context)).configure({ model: parseModel(model) }, context);
 		await this.rebuildNow(context);

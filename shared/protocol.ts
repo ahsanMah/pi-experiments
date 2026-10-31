@@ -108,6 +108,8 @@ export type ClientMessage = { readonly requestId?: string } & (
 	/** A fresh, unrelated root conversation. Ack result: { conversationId }. */
 	| { readonly t: "new"; readonly title?: string }
 	| { readonly t: "rename"; readonly conversationId: ConversationId; readonly title: string }
+	/** Delete a branch and every branch forked from it. Refused for the last remaining branch. */
+	| { readonly t: "delete"; readonly conversationId: ConversationId }
 	| { readonly t: "configure"; readonly conversationId: ConversationId; readonly model: string }
 	/** Share context into other branches. Ack result: { noteId, noteIds }. A summary or
 	 * transcript covers only the source's history after its lowest common ancestor with each target; targets with

@@ -150,8 +150,17 @@ export class TreeIndexer {
 		const displayedAt = new Map<EntryId, EntryId | null>();
 		const branches: BranchInfo[] = [];
 
+		// Deleted branches drop out with everything forked from them; parents come first, so one pass finds them all.
+		const hidden = new Set<ConversationId>();
+		for (const { record } of caches) {
+			if (meta[String(record.id)]?.deletedAt !== undefined || (record.parent !== undefined && hidden.has(record.parent.conversationId))) {
+				hidden.add(record.id);
+			}
+		}
+
 		for (const cache of caches) {
 			const { record } = cache;
+			if (hidden.has(record.id)) continue;
 			let previousDisplayed: EntryId | null =
 				record.parent === undefined ? null : (displayedAt.get(record.parent.at) ?? null);
 			let previousRaw: EntryId | undefined = record.parent?.at;
@@ -206,6 +215,11 @@ export class TreeIndexer {
 				sharedIn: notesFor(board, record.id).length,
 			});
 		}
-		return { branches, nodes, notes: board, suggestions };
+		return {
+			branches,
+			nodes,
+			notes: board,
+			suggestions: suggestions.filter((s) => !hidden.has(s.conversationId as unknown as ConversationId)),
+		};
 	}
 }

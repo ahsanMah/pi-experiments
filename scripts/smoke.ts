@@ -214,6 +214,17 @@ try {
 	socket.send("42");
 	await request({ t: "rename", conversationId: side, title: "Still alive" });
 	assert(true, "server survives null and non-object messages");
+
+	const before = (await until(() => true, "tree")).branches.length;
+	const doomed = await request<{ conversationId: number }>({ t: "fork", conversationId: side, at: sideUser.id, title: "Doomed" });
+	await request({ t: "fork", conversationId: doomed.conversationId, at: sideUser.id, title: "Doomed child" });
+	await until((tree) => tree.branches.length === before + 2, "two forks to delete");
+	await request({ t: "delete", conversationId: doomed.conversationId });
+	const pruned = await until((tree) => tree.branches.length === before, "deleted branch and its fork leave the tree");
+	assert(
+		!pruned.branches.some((b) => b.title.startsWith("Doomed")) && !pruned.nodes.some((n) => n.conversationId === doomed.conversationId),
+		"a deleted branch takes its forks and nodes with it",
+	);
 	console.log("smoke test passed");
 } finally {
 	socket.close();
