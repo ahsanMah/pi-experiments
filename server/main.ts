@@ -20,7 +20,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
 import { BranchesApp } from "./app.ts";
 import { connect } from "./connection.ts";
-import { createProjectContextExtension, loadContextFiles } from "./context-files.ts";
+import { createProjectContextExtension, createSkillsExtension, loadContextFiles, loadSkillsPrompt } from "./context-files.ts";
 import { echoProvider } from "./echo.ts";
 
 const port = Number(process.env.PORT ?? 8787);
@@ -30,6 +30,7 @@ const database = process.env.PI_BRANCHES_DB ?? "./branches.sqlite";
 const cwd = process.env.PI_BRANCHES_CWD;
 const usePiConfig = process.env.PI_BRANCHES_PI_CONFIG !== "0";
 const useContextFiles = process.env.PI_BRANCHES_CONTEXT_FILES !== "0";
+const useSkills = process.env.PI_BRANCHES_SKILLS !== "0";
 const webRoot = resolve(import.meta.dirname, "../web/dist");
 const context = BACKGROUND_CONTEXT;
 
@@ -61,13 +62,18 @@ const loadModels = async (): Promise<ModelSetup> => {
 const setup = await loadModels();
 
 // AGENTS.md / CLAUDE.md from pi's agent directory and the working directory's ancestors, like pi.
-const contextFiles = useContextFiles
-	? await loadContextFiles(
-			resolve(cwd ?? process.cwd()),
-			usePiConfig ? (await import("@earendil-works/pi-coding-agent")).getAgentDir() : undefined,
-		)
-	: [];
-const extensions = [...(cwd !== undefined ? [CodingTools] : []), createProjectContextExtension(contextFiles)];
+const agentDir = usePiConfig ? (await import("@earendil-works/pi-coding-agent")).getAgentDir() : undefined;
+const contextFiles = useContextFiles ? await loadContextFiles(resolve(cwd ?? process.cwd()), agentDir) : [];
+// Skills, like pi, only when the model has a read tool to load them with: the coding tools.
+const skills =
+	useSkills && cwd !== undefined
+		? await loadSkillsPrompt(resolve(cwd), agentDir, (message) => console.warn(message))
+		: { text: undefined, names: [] };
+const extensions = [
+	...(cwd !== undefined ? [CodingTools] : []),
+	createProjectContextExtension(contextFiles),
+	createSkillsExtension(skills.text),
+];
 const app = await BranchesApp.open(
 	{
 		storage: await openNodeSqliteStorage(database),
@@ -126,6 +132,7 @@ wss.on("connection", (socket: WebSocket) => {
 
 server.listen(port, host, () => {
 	for (const file of contextFiles) console.log(`context file ${file.path}`);
+	if (skills.names.length > 0) console.log(`skills: ${skills.names.join(", ")}`);
 	console.log(`pi-branches on http://${host}:${port} (model ${setup.model} from ${setup.source}, storage ${database})`);
 });
 

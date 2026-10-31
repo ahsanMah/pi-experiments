@@ -13,6 +13,18 @@ const SECTION_NAMES: Record<string, string> = {
 	branches: "Branch info",
 	"shared-context": "Shared notes",
 	"project-context": "Project instructions",
+	skills: "Skills",
+};
+
+/** pi's skills list: the shared instructions, then one `<skill>` per skill, named by its `<name>`. */
+const splitSkills = (text: string): { label: string; tokens: number }[] => {
+	const skills = [...text.matchAll(/<skill>[\s\S]*?<name>([^<]*)<\/name>[\s\S]*?<\/skill>/g)];
+	if (skills.length === 0) return [{ label: SECTION_NAMES.skills!, tokens: text.length }];
+	const rest = skills.reduce((left, m) => left - m[0].length, text.length);
+	return [
+		{ label: "Skills: how to use", tokens: rest },
+		...skills.map((m) => ({ label: `Skill: ${m[1]!.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")}`, tokens: m[0].length })),
+	];
 };
 
 /** pi's project context, one `<project_instructions path="…">` block per file, split so each file shows on its own. */
@@ -85,7 +97,7 @@ export const contextBreakdown = (view: ConversationView, actualTokens?: number):
 	}
 
 	const sectionDetail = [...sections].flatMap(([key, text]) =>
-		key === "project-context" ? splitProjectContext(text) : [{ label: SECTION_NAMES[key] ?? key, tokens: text.length }],
+		key === "project-context" ? splitProjectContext(text) : key === "skills" ? splitSkills(text) : [{ label: SECTION_NAMES[key] ?? key, tokens: text.length }],
 	);
 	const toolDetail = [...tools].map(([name, chars]) => ({ label: name, tokens: chars })).sort((a, b) => b.tokens - a.tokens);
 	const parts: ContextPart[] = [

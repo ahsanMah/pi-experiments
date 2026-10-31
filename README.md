@@ -28,6 +28,7 @@ The server uses your pi coding agent setup: credentials from `~/.pi/agent/auth.j
 | `PI_BRANCHES_DB` | `./branches.sqlite` | SQLite file holding the whole tree |
 | `PI_BRANCHES_CWD` | unset | Enables pi-durable's coding tools (read, write, edit, bash) in this directory |
 | `PI_BRANCHES_CONTEXT_FILES` | `1` | `0` skips AGENTS.md / CLAUDE.md. Otherwise they are loaded as pi does: the one in pi's agent directory, then one per directory from the root down to `PI_BRANCHES_CWD` (else the server's directory), read at startup |
+| `PI_BRANCHES_SKILLS` | `1` | `0` skips skills. Otherwise, when `PI_BRANCHES_CWD` gives the models a read tool, skills are found by pi's own resource loader (pi's settings, packages, `~/.pi/agent/skills`, the project's `.pi/skills`) and listed in the system prompt as pi lists them; with `PI_BRANCHES_PI_CONFIG=0` only the project's `.pi/skills` |
 | `PORT` | `8787` | HTTP and WebSocket port |
 | `HOST` | `127.0.0.1` | Interface to listen on |
 
