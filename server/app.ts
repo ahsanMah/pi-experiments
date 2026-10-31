@@ -334,32 +334,89 @@ export class BranchesApp {
 			text?: string;
 		},
 		context: Context,
-	): Promise<SharedNote> {
+	): Promise<SharedNote[]> {
 		const { mode, from } = request;
-		let text: string;
+		const sourceTitle = from === undefined ? undefined : this.#tree.branches.find((b) => b.id === from.conversationId)?.title;
+		const note = (text: string, to: SharedNote["to"]) =>
+			this.addNote(
+				{
+					title: request.title?.trim() || (sourceTitle !== undefined ? `${mode === "summary" ? "Summary" : "Transcript"} of "${sourceTitle}"` : "Note"),
+					text,
+					to,
+					...(from !== undefined ? { from: { conversationId: from.conversationId as unknown as number, ...(from.at !== undefined ? { at: from.at as unknown as number } : {}) } } : {}),
+					author: "user",
+				},
+				context,
+			);
 		if (mode === "note") {
 			if (request.text === undefined || request.text.trim() === "") throw new Error("A note needs text");
-			text = request.text;
-		} else {
-			if (from === undefined) throw new Error(`A ${mode} share needs a source branch`);
-			const transcript = await this.transcript(from.conversationId, from.at, context);
-			text = mode === "transcript" ? transcript : await this.summarize(from.conversationId, transcript, request.text, context);
+			return [await note(request.text, request.to as SharedNote["to"])];
 		}
-		const sourceTitle = from === undefined ? undefined : this.#tree.branches.find((b) => b.id === from.conversationId)?.title;
-		return this.addNote(
-			{
-				title: request.title?.trim() || (sourceTitle !== undefined ? `${mode === "summary" ? "Summary" : "Transcript"} of "${sourceTitle}"` : "Note"),
-				text,
-				to: request.to as SharedNote["to"],
-				...(from !== undefined ? { from: { conversationId: from.conversationId as unknown as number, ...(from.at !== undefined ? { at: from.at as unknown as number } : {}) } } : {}),
-				author: "user",
-			},
-			context,
-		);
+		if (from === undefined) throw new Error(`A ${mode} share needs a source branch`);
+		if (mode === "transcript") {
+			return [await note(await this.transcript(from.conversationId, from.at, context), request.to as SharedNote["to"])];
+		}
+		// A summary covers only what the source has that each target doesn't: its history after their
+		// lowest common ancestor. Targets with the same LCA share one note. A share with every branch
+		// also reaches branches made later, which may fork anywhere, so it summarizes the whole history.
+		const history = await this.indexer.history(from.conversationId, from.at, context);
+		if (request.to === "*") return [await note(await this.summarizeAfter(from.conversationId, history, 0, request.text, context), "*")];
+		const groups = new Map<number, ConversationId[]>();
+		for (const target of request.to) {
+			const shared = await this.#sharedPrefix(history, target, context);
+			if (shared === history.length) continue; // the target already has all of it
+			groups.set(shared, [...(groups.get(shared) ?? []), target]);
+		}
+		if (groups.size === 0) throw new Error("Those branches already have this history; there is nothing to summarize");
+		const notes: SharedNote[] = [];
+		for (const [shared, targets] of groups) {
+			const text = await this.summarizeAfter(from.conversationId, history, shared, request.text, context);
+			notes.push(await note(text, targets as unknown as SharedNote["to"]));
+		}
+		return notes;
+	}
+
+	/** How many leading entries of `history` the target branch also has: the path to their lowest common ancestor. */
+	async #sharedPrefix(history: readonly EntryRecord[], target: ConversationId, context: Context): Promise<number> {
+		const theirs = new Set((await this.indexer.history(target, undefined, context)).map((entry) => `${entry.conversationId}:${entry.id}`));
+		let shared = 0;
+		while (shared < history.length && theirs.has(`${history[shared]!.conversationId}:${history[shared]!.id}`)) shared++;
+		return shared;
+	}
+
+	/**
+	 * Summarize `history` after its first `shared` entries, which the reader already has. Those become one
+	 * line naming the last message both sides share, instead of being summarized again.
+	 */
+	async summarizeAfter(
+		id: ConversationId,
+		history: readonly EntryRecord[],
+		shared: number,
+		instructions: string | undefined,
+		context: Context,
+	): Promise<string> {
+		const render = (list: readonly EntryRecord[]) => list.map(renderEntry).filter((line) => line !== "").join("\n\n");
+		const last = history
+			.slice(0, shared)
+			.reverse()
+			.find((entry) => renderEntry(entry) !== "");
+		if (last === undefined) return this.summarize(id, render(history), instructions, context);
+		const quote = (text: string) => `"${text.replace(/\s+/g, " ").trim()}"`;
+		const preview = this.#tree.nodes.find((node) => node.id === (last.id as unknown as number))?.preview ?? clip(renderEntry(last), 120);
+		const title = this.#tree.branches.find((b) => b.id === (id as unknown as number))?.title;
+		const origin = `Branch ${id}${title !== undefined ? `, ${quote(title)},` : ""} shares your history up to ${quote(preview)}; this covers what it added after that.`;
+		const summary = await this.summarize(id, render(history.slice(shared)), instructions, context, origin);
+		return `${origin}\n\n${summary}`;
 	}
 
 	/** Summarize with the source branch's own model, outside any conversation, so nothing is added to the tree. */
-	async summarize(id: ConversationId, transcript: string, instructions: string | undefined, context: Context): Promise<string> {
+	async summarize(
+		id: ConversationId,
+		transcript: string,
+		instructions: string | undefined,
+		context: Context,
+		origin?: string,
+	): Promise<string> {
 		const agent = await (await this.#conversation(id, context)).agent(context);
 		const ref = agent.model ?? parseModel(this.defaultModel);
 		const model = this.#models.getModel(ref.provider, ref.modelId);
@@ -367,11 +424,16 @@ export class BranchesApp {
 		const answer = await this.#models.completeSimple(model, {
 			systemPrompt:
 				"You summarize one branch of a conversation so another branch can use it. Keep facts, decisions, " +
-				"open questions, and file or code references. Be concise; use bullet points.",
+				"open questions, and file or code references. Be concise; use bullet points." +
+				(origin === undefined
+					? ""
+					: " The transcript holds only what this branch added after the history it shares with the reader; " +
+						"that shared part is already known to the reader and is noted in a line above your summary. " +
+						"Summarize only what this branch added; do not restate the shared point or reconstruct what came before it."),
 			messages: [
 				{
 					role: "user",
-					content: `${instructions ? `Focus: ${instructions}\n\n` : ""}<branch>\n${transcript}\n</branch>`,
+					content: `${origin ? `${origin} The transcript below starts after that.\n\n` : ""}${instructions ? `Focus: ${instructions}\n\n` : ""}<branch>\n${transcript}\n</branch>`,
 					timestamp: Date.now(),
 				},
 			],
@@ -384,6 +446,11 @@ export class BranchesApp {
 		await this.harness.close(context);
 	}
 }
+
+const clip = (text: string, length: number): string => {
+	const flat = text.replace(/\s+/g, " ").trim();
+	return flat.length > length ? `${flat.slice(0, length)}…` : flat;
+};
 
 const renderEntry = (entry: EntryRecord): string => {
 	const shown = classify(entry);

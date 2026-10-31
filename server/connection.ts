@@ -82,7 +82,7 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 			case "configure":
 				return app.configure(message.conversationId as ConversationId, message.model, context);
 			case "share": {
-				const note = await app.share(
+				const notes = await app.share(
 					{
 						mode: message.mode,
 						to: message.to as readonly ConversationId[] | "*",
@@ -99,7 +99,7 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 					},
 					context,
 				);
-				return { noteId: note.id };
+				return { noteId: notes[0]!.id, noteIds: notes.map((note) => note.id) };
 			}
 			case "unshare":
 				return app.removeNote(message.noteId, context);
