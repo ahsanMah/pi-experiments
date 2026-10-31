@@ -99,10 +99,19 @@
 			scroller.scrollTo({ top, behavior: "instant" });
 		})();
 	});
+	// Scroll to the focused message once it is on the page. Opening another branch remounts the chat
+	// before that branch's view arrives, so this waits for the entries instead of trying only once.
+	let scrolledTo: number | null = null;
 	$effect(() => {
-		if (focusId === null) return;
+		void entries.length;
 		const id = focusId;
-		void tick().then(() => scroller?.querySelector(`[data-entry="${id}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }));
+		if (id === null || id === scrolledTo) return;
+		void tick().then(() => {
+			const row = scroller?.querySelector(`[data-entry="${id}"]`);
+			if (row === null || row === undefined) return;
+			scrolledTo = id;
+			row.scrollIntoView({ block: "center", behavior: "smooth" });
+		});
 	});
 	// The chat remounts for each branch (keyed in App), so focus the composer once, on mount. Tracking
 	// the branch here would refocus on every tree update and pull focus out of dialogs and the palette.
