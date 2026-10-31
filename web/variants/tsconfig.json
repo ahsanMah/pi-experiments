@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "include": ["*/**/*.ts", "*/**/*.svelte", "../src/**/*.ts", "../src/**/*.svelte", "../../shared/**/*.ts"],
+  "exclude": ["_template", "*/dist"]
+}

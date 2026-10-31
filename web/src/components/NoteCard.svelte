@@ -18,10 +18,9 @@
 
 <div class="note">
 	<div class="meta">
-		<span>{note.author === "model" ? "Posted by a model" : "Shared by you"}</span>
 		{#if note.from}
 			<span>
-				from
+				From
 				{#if openBranch}
 					<button class="link" onclick={() => openBranch(note.from!.conversationId, note.from!.at ?? null)}>{titleOf(note.from.conversationId)}</button>
 				{:else}
@@ -29,7 +28,8 @@
 				{/if}
 			</span>
 		{/if}
-		<span>to {targets}</span>
+		<span>{note.from ? "to" : "Note to"} {targets}</span>
+		{#if note.author === "model"}<span>posted by a model</span>{/if}
 		<span>{when}</span>
 	</div>
 	<div class="text markdown">{@html renderMarkdown(note.text)}</div>
