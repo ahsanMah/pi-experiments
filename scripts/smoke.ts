@@ -125,6 +125,16 @@ try {
 	);
 	assert(true, "a share with every branch marks each branch");
 
+	// A summary of a fork covers only what the fork added; the inherited part is one "forked from" line.
+	const { noteId: summaryId } = await request<{ noteId: string }>({ t: "share", mode: "summary", from: { conversationId: side }, to: [main.id] });
+	const summary = (await until((t) => t.notes.some((n) => n.id === summaryId), "summary note")).notes.find((n) => n.id === summaryId)!;
+	assert(
+		summary.text.startsWith("Forked from branch") &&
+			summary.text.includes("Side question") &&
+			!summary.text.includes("Asked: What is a durable harness?"),
+		`a fork's summary leaves its inherited part to the fork line:\n${summary.text}`,
+	);
+
 	// Rapid switching leaves the subscription in its last requested state.
 	for (let i = 0; i < 5; i++) {
 		socket.send(JSON.stringify({ t: "unsubscribe", conversationId: main.id }));

@@ -342,8 +342,10 @@ export class BranchesApp {
 			text = request.text;
 		} else {
 			if (from === undefined) throw new Error(`A ${mode} share needs a source branch`);
-			const transcript = await this.transcript(from.conversationId, from.at, context);
-			text = mode === "transcript" ? transcript : await this.summarize(from.conversationId, transcript, request.text, context);
+			text =
+				mode === "transcript"
+					? await this.transcript(from.conversationId, from.at, context)
+					: await this.summarizeBranch(from.conversationId, from.at, request.text, context);
 		}
 		const sourceTitle = from === undefined ? undefined : this.#tree.branches.find((b) => b.id === from.conversationId)?.title;
 		return this.addNote(
@@ -358,8 +360,33 @@ export class BranchesApp {
 		);
 	}
 
+	/**
+	 * Summarize a branch's own part through `at`. What it inherited from its fork parent is already in
+	 * the parent (and usually in the target), so it becomes one "forked from" line instead of being
+	 * summarized again. A share from inside the inherited part summarizes that part as-is.
+	 */
+	async summarizeBranch(id: ConversationId, at: EntryId | undefined, instructions: string | undefined, context: Context): Promise<string> {
+		const entries = await this.indexer.history(id, at, context);
+		const own = entries.filter((entry) => entry.conversationId === id);
+		const place = this.place(id);
+		const render = (list: readonly EntryRecord[]) => list.map(renderEntry).filter((line) => line !== "").join("\n\n");
+		if (own.length === 0 || own.length === entries.length || place?.parent === undefined) {
+			return this.summarize(id, render(entries), instructions, context);
+		}
+		const quote = (text: string) => `"${text.replace(/\s+/g, " ").trim()}"`;
+		const origin = `Forked from branch ${place.parent.id}, ${quote(place.parent.title)}, after ${quote(place.parent.after)}.`;
+		const summary = await this.summarize(id, render(own), instructions, context, origin);
+		return `${origin}\n\n${summary}`;
+	}
+
 	/** Summarize with the source branch's own model, outside any conversation, so nothing is added to the tree. */
-	async summarize(id: ConversationId, transcript: string, instructions: string | undefined, context: Context): Promise<string> {
+	async summarize(
+		id: ConversationId,
+		transcript: string,
+		instructions: string | undefined,
+		context: Context,
+		origin?: string,
+	): Promise<string> {
 		const agent = await (await this.#conversation(id, context)).agent(context);
 		const ref = agent.model ?? parseModel(this.defaultModel);
 		const model = this.#models.getModel(ref.provider, ref.modelId);
@@ -367,11 +394,16 @@ export class BranchesApp {
 		const answer = await this.#models.completeSimple(model, {
 			systemPrompt:
 				"You summarize one branch of a conversation so another branch can use it. Keep facts, decisions, " +
-				"open questions, and file or code references. Be concise; use bullet points.",
+				"open questions, and file or code references. Be concise; use bullet points." +
+				(origin === undefined
+					? ""
+					: " The transcript holds only this branch's own messages; everything before the fork point is " +
+						"already known to the reader and is noted in a line above your summary. Summarize only what " +
+						"this branch added; do not restate the fork point or reconstruct what came before it."),
 			messages: [
 				{
 					role: "user",
-					content: `${instructions ? `Focus: ${instructions}\n\n` : ""}<branch>\n${transcript}\n</branch>`,
+					content: `${origin ? `${origin} The transcript below starts after that.\n\n` : ""}${instructions ? `Focus: ${instructions}\n\n` : ""}<branch>\n${transcript}\n</branch>`,
 					timestamp: Date.now(),
 				},
 			],
