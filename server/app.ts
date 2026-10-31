@@ -44,7 +44,7 @@ export class BranchesApp {
 	readonly #models: Models;
 	readonly #agent: AgentChange;
 	readonly #listeners = new Set<(tree: TreeIndex) => void>();
-	#tree: TreeIndex = { branches: [], nodes: [], notes: [], suggestions: [] };
+	#tree: TreeIndex = { branches: [], nodes: [], notes: [], suggestions: [], deleted: [] };
 	#rebuild: { timer?: ReturnType<typeof setTimeout>; running?: Promise<void>; again?: boolean } = {};
 
 	private constructor(harness: Harness, models: Models, defaultModel: string, agent: AgentChange, available: string[]) {
@@ -189,6 +189,39 @@ export class BranchesApp {
 		await this.#setTitle(conversation.id, title?.trim() || `Thread ${conversation.id}`, context);
 		await this.rebuildNow(context);
 		return conversation.id;
+	}
+
+	/**
+	 * Delete a branch and every branch forked from it. pi-durable has no way to drop a conversation,
+	 * so they are marked deleted and leave the tree; their runs are stopped. The last branch stays.
+	 */
+	async remove(id: ConversationId, context: Context): Promise<void> {
+		const tree = this.#tree;
+		if (!tree.branches.some((b) => b.id === (id as unknown as number))) throw new Error(`No branch ${id}`);
+		const doomed = new Set<number>([id as unknown as number]);
+		for (const branch of tree.branches) {
+			if (branch.parent !== undefined && doomed.has(branch.parent.conversationId)) doomed.add(branch.id);
+		}
+		if (doomed.size >= tree.branches.length) throw new Error("This is the only thread left; start another before deleting it");
+		for (const branch of tree.branches) {
+			if (doomed.has(branch.id) && branch.busy) await (await this.#conversation(branch.id as unknown as ConversationId, context)).abort(context);
+		}
+		await this.harness.commit(async (tx) => {
+			const meta = await tx.doc(BranchMetaDoc);
+			const existing = meta.branches[String(id)];
+			if (existing === undefined) meta.branches[String(id)] = { title: "", createdAt: Date.now(), deletedAt: Date.now() };
+			else existing.deletedAt = Date.now();
+		}, context);
+		await this.rebuildNow(context);
+	}
+
+	async restore(id: ConversationId, context: Context): Promise<void> {
+		if (!this.#tree.deleted.some((d) => d.id === (id as unknown as number))) throw new Error(`Branch ${id} is not deleted, or sits inside a deleted branch`);
+		await this.harness.commit(async (tx) => {
+			const entry = (await tx.doc(BranchMetaDoc)).branches[String(id)];
+			if (entry !== undefined) delete entry.deletedAt;
+		}, context);
+		await this.rebuildNow(context);
 	}
 
 	async configure(id: ConversationId, model: string, context: Context): Promise<void> {

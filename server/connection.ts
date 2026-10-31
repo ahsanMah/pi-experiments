@@ -79,6 +79,10 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 				return { conversationId: await app.create(message.title, context) };
 			case "rename":
 				return app.rename(message.conversationId as ConversationId, message.title, context);
+			case "delete":
+				return app.remove(message.conversationId as ConversationId, context);
+			case "restore":
+				return app.restore(message.conversationId as ConversationId, context);
 			case "configure":
 				return app.configure(message.conversationId as ConversationId, message.model, context);
 			case "share": {
@@ -109,6 +113,9 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 				return app.dismissSuggestion(message.id, context);
 			case "text":
 				return { text: await app.entryText(message.conversationId as ConversationId, message.entryId as EntryId, context) };
+			default:
+				// A client newer than this server; say so instead of acknowledging a request that did nothing.
+				throw new Error(`Unknown request "${(message as { t: string }).t}"; restart the server if it predates the client`);
 		}
 	};
 

@@ -106,3 +106,13 @@ button.danger {
 		display: none;
 	}
 }
+
+/* KaTeX display math: scroll wide equations instead of overflowing the message. */
+.markdown .math-block {
+	overflow-x: auto;
+	overflow-y: hidden;
+	margin: 0.6em 0;
+}
+.markdown .katex-display {
+	margin: 0;
+}

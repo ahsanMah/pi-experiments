@@ -7,6 +7,8 @@ export default defineConfig(({ mode }) => ({
 	root: import.meta.dirname,
 	base: "./",
 	plugins: [svelte()],
+	// Only the main app: the scan would otherwise crawl web/variants/*, including the incomplete _template.
+	optimizeDeps: { entries: ["index.html"] },
 	server: {
 		port: Number(process.env.WEB_PORT ?? 5173),
 		proxy: { "/ws": { target: `ws://localhost:${process.env.PORT ?? 8787}`, ws: true } },
@@ -14,6 +16,6 @@ export default defineConfig(({ mode }) => ({
 	build: {
 		outDir: "dist",
 		emptyOutDir: true,
-		...(mode === "demo" ? { cssCodeSplit: false, chunkSizeWarningLimit: 2000, rollupOptions: { output: { inlineDynamicImports: true } } } : {}),
+		...(mode === "demo" ? { assetsInlineLimit: Number.MAX_SAFE_INTEGER, cssCodeSplit: false, chunkSizeWarningLimit: 2000, rollupOptions: { output: { inlineDynamicImports: true } } } : {}),
 	},
 }));

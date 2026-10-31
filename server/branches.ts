@@ -8,7 +8,8 @@ import { defineDoc, defineExtension, defineTool, section } from "@earendil-works
 import type { ConversationId, Harness } from "@earendil-works/pi-durable";
 import type { BranchSuggestion, SharedNote } from "../shared/protocol.ts";
 
-type Meta = { title: string; createdAt: number };
+/** `deletedAt` hides the branch and every branch forked from it; pi-durable keeps the entries. */
+type Meta = { title: string; createdAt: number; deletedAt?: number };
 
 /** Titles and creation times of conversations, keyed by conversation id. */
 export const BranchMetaDoc = defineDoc<{ branches: Record<string, Meta> }>({

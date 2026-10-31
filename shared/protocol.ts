@@ -77,11 +77,22 @@ export type BranchSuggestion = {
 	readonly createdAt: number;
 };
 
+/** A deleted branch that can be restored; branches forked from it come back with it. */
+export type DeletedBranch = {
+	readonly id: ConversationId;
+	readonly title: string;
+	readonly deletedAt: number;
+	/** Branches forked from it (directly or further down) that are hidden with it. */
+	readonly forks: number;
+};
+
 export type TreeIndex = {
 	readonly branches: readonly BranchInfo[];
 	readonly nodes: readonly TreeNode[];
 	readonly notes: readonly SharedNote[];
 	readonly suggestions: readonly BranchSuggestion[];
+	/** Deleted branches whose parent is still in the tree, newest first. */
+	readonly deleted: readonly DeletedBranch[];
 };
 
 export type ShareMode =
@@ -108,6 +119,10 @@ export type ClientMessage = { readonly requestId?: string } & (
 	/** A fresh, unrelated root conversation. Ack result: { conversationId }. */
 	| { readonly t: "new"; readonly title?: string }
 	| { readonly t: "rename"; readonly conversationId: ConversationId; readonly title: string }
+	/** Delete a branch and every branch forked from it. Refused for the last remaining branch. */
+	| { readonly t: "delete"; readonly conversationId: ConversationId }
+	/** Bring back a deleted branch, with the branches forked from it that weren't deleted on their own. */
+	| { readonly t: "restore"; readonly conversationId: ConversationId }
 	| { readonly t: "configure"; readonly conversationId: ConversationId; readonly model: string }
 	/** Share context into other branches. Ack result: { noteId, noteIds }. A summary or
 	 * transcript covers only the source's history after its lowest common ancestor with each target; targets with

@@ -60,6 +60,8 @@
 	let dark = $state(readTheme());
 	$effect(() => {
 		const update = () => (dark = readTheme());
+		// The saved theme may have been applied before this observer existed (on load); catch up.
+		update();
 		query.addEventListener("change", update);
 		const observer = new MutationObserver(update);
 		observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
@@ -184,6 +186,37 @@
 		confirmLabel: "Rename",
 		submit: async (title) => void (await client.request({ t: "rename", conversationId: branch.id, title })),
 	});
+	/** Confirm before deleting: the branch goes with everything forked from it. */
+	const deletePage = (branch: BranchInfo): PalettePage => {
+		const doomed = new Set([branch.id]);
+		for (const b of client.tree.branches) if (b.parent !== undefined && doomed.has(b.parent.conversationId)) doomed.add(b.id);
+		const forks = doomed.size - 1;
+		return {
+			kind: "list",
+			title: `Delete ${branch.title}${forks > 0 ? ` and ${forks} branch${forks === 1 ? "" : "es"} forked from it` : ""}?`,
+			placeholder: "This cannot be undone from here",
+			items: [
+				{ id: "delete-confirm", icon: "✕", label: `Delete ${branch.title}`, group: "Confirm", ...(forks > 0 ? { detail: `with ${forks} fork${forks === 1 ? "" : "s"}` } : {}), run: async () => void (await client.request({ t: "delete", conversationId: branch.id })) },
+				{ id: "delete-cancel", icon: "↩", label: "Keep it", group: "Confirm", run: () => {} },
+			],
+		};
+	};
+	const restorePage = (): PalettePage => ({
+		kind: "list",
+		title: "Restore a deleted branch",
+		placeholder: "Search deleted branches…",
+		items: client.tree.deleted.map((d) => ({
+			id: `restore:${d.id}`,
+			icon: "↺",
+			label: d.title,
+			group: "Deleted",
+			detail: `${new Date(d.deletedAt).toLocaleString()}${d.forks > 0 ? ` · with ${d.forks} fork${d.forks === 1 ? "" : "s"}` : ""}`,
+			run: async () => {
+				await client.request({ t: "restore", conversationId: d.id });
+				toChat(d.id);
+			},
+		})),
+	});
 	const modelPage = (branch: BranchInfo): PalettePage => ({
 		kind: "list",
 		title: `Model for ${branch.title}`,
@@ -216,6 +249,7 @@
 			act({ id: "share-summary", icon: "⇄", label: `Share a summary of ${a.title} to…`, keywords: "context", run: () => sharePage(a, "summary") });
 			act({ id: "share-transcript", icon: "⇄", label: `Share the transcript of ${a.title} to…`, keywords: "context", run: () => sharePage(a, "transcript") });
 			act({ id: "rename", icon: "✎", label: "Rename…", detail: a.title, run: () => renamePage(a) });
+			act({ id: "delete", icon: "✕", label: "Delete branch…", detail: a.title, keywords: "remove trash discard", run: () => deletePage(a) });
 			act({ id: "model", icon: "◇", label: "Change model…", detail: a.model, run: () => modelPage(a) });
 			if (a.busy) act({ id: "stop", icon: "■", label: `Stop ${a.title}`, keywords: "abort cancel", run: () => void client.request({ t: "abort", conversationId: a.id }) });
 		}
@@ -227,6 +261,7 @@
 		);
 		app({ id: "theme", icon: "◐", label: "Change theme", detail: `now ${theme}`, keywords: "light dark appearance mode", run: () => void cycleTheme() });
 		app({ id: "new", icon: "＋", label: "New thread", detail: "an unrelated conversation", keywords: "create root branch", run: newThread });
+		if (client.tree.deleted.length > 0) app({ id: "restore", icon: "↺", label: "Restore a deleted branch…", detail: `${client.tree.deleted.length} deleted`, keywords: "undelete undo trash recover", run: restorePage });
 		app({ id: "note", icon: "✦", label: "Write a note to…", keywords: "share context", run: notePage });
 		if (view === "chat")
 			app({
