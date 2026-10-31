@@ -21,6 +21,7 @@ import {
 	TuiAltScreen,
 	VStack,
 } from "@earendil-works/pi-tui";
+import { contextShare, formatContext, formatSpeed } from "../shared/format.ts";
 import type { BranchInfo, ConversationId, TreeNode } from "../shared/protocol.ts";
 import { BranchesClient } from "./client.ts";
 import { pick, prompt, read } from "./dialogs.ts";
@@ -136,6 +137,12 @@ const renderStatus = () => {
 	parts.push(branch.busy ? style.yellow(`${spinner()} working`) : style.green("idle"));
 	if (branch.queued > 0) parts.push(style.yellow(`${branch.queued} queued`));
 	if (branch.model !== undefined) parts.push(style.dim(branch.model));
+	const context = formatContext(branch);
+	if (context !== undefined) {
+		const share = contextShare(branch) ?? 0;
+		parts.push((share >= 0.9 ? style.red : share >= 0.7 ? style.yellow : style.dim)(`ctx ${context}`));
+	}
+	if (branch.tokensPerSecond !== undefined) parts.push(style.dim(formatSpeed(branch.tokensPerSecond)));
 	parts.push(style.dim(`$${branch.costUsd.toFixed(4)}`));
 	if (branch.sharedIn > 0) parts.push(style.magenta(`⇄ ${branch.sharedIn} shared`));
 	if (client.tree.suggestions.length > 0) parts.push(style.yellow(`✦ ${client.tree.suggestions.length} suggested (/suggestions)`));

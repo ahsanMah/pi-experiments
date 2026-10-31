@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { contextShare, formatSpeed, formatTokens } from "../../../shared/format.ts";
 	import type { BranchInfo, SharedNote, TreeIndex } from "../../../shared/protocol.ts";
 	import { branchHue } from "../lib/layout.ts";
 	import NoteCard from "./NoteCard.svelte";
@@ -72,6 +73,9 @@
 		return perRow;
 	});
 
+	const active = $derived(tree.branches.find((b) => b.id === activeId));
+	const share = $derived(active === undefined ? undefined : contextShare(active));
+
 	const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 
 	const titleOf = (id: number) => tree.branches.find((b) => b.id === id)?.title ?? "another branch";
@@ -114,6 +118,29 @@
 		{/each}
 	</ul>
 
+	{#if active !== undefined}
+		<div class="section-head">
+			<h2>Context</h2>
+		</div>
+		<div class="context" title="Context of {active.title}'s last model request">
+			{#if active.context !== undefined}
+				<div class="context-line">
+					<span>{formatTokens(active.context.tokens)}{#if active.context.window}<span class="muted"> / {formatTokens(active.context.window)}</span>{/if} tokens</span>
+					{#if share !== undefined}<span class="muted">{Math.round(share * 100)}%</span>{/if}
+				</div>
+				{#if share !== undefined}
+					<div class="meter" class:warn={share >= 0.7} class:full={share >= 0.9}><div style="width: {share * 100}%"></div></div>
+				{/if}
+			{:else}
+				<div class="context-line muted">No model request yet</div>
+			{/if}
+			<div class="context-line muted">
+				<span>{active.tokensPerSecond !== undefined ? formatSpeed(active.tokensPerSecond) : "– tok/s"}</span>
+				{#if active.costUsd > 0}<span>${active.costUsd.toFixed(4)}</span>{/if}
+			</div>
+		</div>
+	{/if}
+
 	{#if tree.suggestions.length > 0}
 		<div class="section-head">
 			<h2>Suggested branches</h2>
@@ -148,6 +175,37 @@
 </aside>
 
 <style>
+	.context {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 2px 8px 8px;
+		font-size: 12px;
+	}
+	.context-line {
+		display: flex;
+		justify-content: space-between;
+		gap: 8px;
+	}
+	.muted {
+		color: var(--text-muted);
+	}
+	.meter {
+		height: 4px;
+		border-radius: 2px;
+		background: var(--border);
+		overflow: hidden;
+	}
+	.meter div {
+		height: 100%;
+		background: hsl(210 70% 55%);
+	}
+	.meter.warn div {
+		background: hsl(38 90% 50%);
+	}
+	.meter.full div {
+		background: hsl(0 70% 55%);
+	}
 	aside {
 		display: flex;
 		flex-direction: column;

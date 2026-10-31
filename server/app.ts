@@ -49,7 +49,13 @@ export class BranchesApp {
 
 	private constructor(harness: Harness, models: Models, defaultModel: string, agent: AgentChange, available: string[]) {
 		this.harness = harness;
-		this.indexer = new TreeIndexer(harness);
+		this.indexer = new TreeIndexer(harness, (provider, modelId) => {
+			try {
+				return models.getModel(provider, modelId)?.contextWindow;
+			} catch {
+				return undefined;
+			}
+		});
 		this.#models = models;
 		this.#agent = agent;
 		this.defaultModel = defaultModel;

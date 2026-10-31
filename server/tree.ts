@@ -61,6 +61,29 @@ export const classify = (entry: EntryRecord): Classified => {
 	}
 };
 
+type ResponseStats = { contextTokens?: number; tokensPerSecond?: number };
+
+/** Context size and output speed of the newest answer; a later compaction or reset leaves the size unknown. */
+const lastResponse = (entries: readonly EntryRecord[]): ResponseStats | undefined => {
+	let cleared = false;
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i]!;
+		if (entry.kind === "pi.compaction" || entry.kind === "pi.reset") cleared = true;
+		if (entry.kind !== "pi.assistant") continue;
+		const message = entry.model?.[0] as
+			| { usage?: { input: number; output: number; cacheRead: number; cacheWrite: number }; durationMs?: number }
+			| undefined;
+		const usage = message?.usage;
+		if (usage === undefined) continue;
+		const stats: ResponseStats = {};
+		if (!cleared) stats.contextTokens = usage.input + usage.cacheRead + usage.cacheWrite + usage.output;
+		if (message?.durationMs !== undefined && message.durationMs > 0 && usage.output > 0)
+			stats.tokensPerSecond = usage.output / (message.durationMs / 1000);
+		return stats;
+	}
+	return cleared ? {} : undefined;
+};
+
 type ConversationCache = {
 	record: ConversationRecord;
 	/** Own entries seen so far, ascending. */
@@ -72,9 +95,11 @@ type ConversationCache = {
 export class TreeIndexer {
 	readonly #harness: Harness;
 	readonly #cache = new Map<ConversationId, ConversationCache>();
+	readonly #contextWindow: (provider: string, modelId: string) => number | undefined;
 
-	constructor(harness: Harness) {
+	constructor(harness: Harness, contextWindow: (provider: string, modelId: string) => number | undefined = () => undefined) {
 		this.#harness = harness;
+		this.#contextWindow = contextWindow;
 	}
 
 	async conversations(context: Context): Promise<ConversationRecord[]> {
@@ -149,6 +174,7 @@ export class TreeIndexer {
 		/** Every raw entry id seen, to the displayed node at or before it. */
 		const displayedAt = new Map<EntryId, EntryId | null>();
 		const branches: BranchInfo[] = [];
+		const statsOf = new Map<ConversationId, ResponseStats>();
 
 		for (const cache of caches) {
 			const { record } = cache;
@@ -190,6 +216,11 @@ export class TreeIndexer {
 			]);
 			const conversation = await this.#harness.conversation(record.id, context);
 			const agent = conversation === undefined ? undefined : await conversation.agent(context);
+			// Context and speed come from the newest own answer, else from the parent at the fork.
+			const stats = lastResponse(cache.entries) ?? (record.parent ? statsOf.get(record.parent.conversationId) : undefined);
+			if (stats !== undefined) statsOf.set(record.id, stats);
+			const window =
+				agent?.model !== undefined ? this.#contextWindow(agent.model.provider, agent.model.modelId) : undefined;
 			const costUsd = Object.values(usage?.models ?? {}).reduce(
 				(sum, entry) => sum + ((entry as { cost?: { total?: number } }).cost?.total ?? 0),
 				0,
@@ -203,6 +234,10 @@ export class TreeIndexer {
 				tip: previousDisplayed,
 				...(agent?.model !== undefined ? { model: `${agent.model.provider}/${agent.model.modelId}` } : {}),
 				costUsd,
+				...(stats?.contextTokens !== undefined
+					? { context: { tokens: stats.contextTokens, ...(window ? { window } : {}) } }
+					: {}),
+				...(stats?.tokensPerSecond !== undefined ? { tokensPerSecond: stats.tokensPerSecond } : {}),
 				sharedIn: notesFor(board, record.id).length,
 			});
 		}
