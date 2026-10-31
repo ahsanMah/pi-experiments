@@ -28,7 +28,7 @@
 		message === undefined ? [] : typeof message.content === "string" ? [{ type: "text", text: message.content }] : ((message.content as ContentBlock[]) ?? []),
 	);
 	const text = $derived(textOf(blocks));
-	const model = $derived(message?.role === "assistant" && message.model !== undefined ? `${message.provider ?? ""}/${message.model}` : "");
+	const model = $derived(message?.role === "assistant" && message.model !== undefined ? (message.provider !== undefined ? `${message.provider}/${message.model}` : message.model) : "");
 	const shared = $derived(entry.data as { noteId?: string; title?: string } | undefined);
 	const note = $derived(notes.find((n) => n.id === shared?.noteId));
 	let copied = $state(false);
