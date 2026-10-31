@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { contextShare, formatSpeed, formatTokens, LiveSpeed } from "../../../shared/format.ts";
+	import { contextShare, formatSpeed, formatTokens } from "../../../shared/format.ts";
 	import { contextBreakdown } from "../lib/context.ts";
 	import type { ConversationView } from "../lib/view.ts";
 	import type { BranchInfo, SharedNote, TreeIndex } from "../../../shared/protocol.ts";
@@ -10,7 +10,7 @@
 	type Props = {
 		tree: TreeIndex;
 		activeId: number | undefined;
-		/** The open branch's view, for the context breakdown and live speed. */
+		/** The open branch's view, for the context breakdown. */
 		view: ConversationView | undefined;
 		select: (id: number) => void;
 		create: () => void;
@@ -87,20 +87,6 @@
 	/** Width of the meter: the window when known, else the parts themselves. */
 	const meterScale = $derived(active?.context?.window ?? partsTotal);
 
-	// Live speed of the answer being streamed; a ticker keeps it moving between partial updates.
-	const speed = new LiveSpeed();
-	let now = $state(Date.now());
-	const generation = $derived(view?.docs["pi.live"]?.generation);
-	const streaming = $derived(generation?.message !== undefined);
-	$effect(() => {
-		if (!streaming) return;
-		const timer = setInterval(() => (now = Date.now()), 250);
-		return () => clearInterval(timer);
-	});
-	const liveSpeed = $derived.by(() => {
-		void now;
-		return speed.update(generation as never, Date.now());
-	});
 
 	const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 
@@ -185,11 +171,7 @@
 				</ul>
 			{/if}
 			<div class="context-line muted">
-				{#if streaming}
-					<span class="live" title="Estimated speed of the answer being written">{liveSpeed !== undefined ? formatSpeed(liveSpeed) : "… tok/s"} <span class="dot">●</span></span>
-				{:else}
-					<span title="Speed of the last answer">{active.tokensPerSecond !== undefined ? formatSpeed(active.tokensPerSecond) : "– tok/s"}</span>
-				{/if}
+				<span title="Speed of the last answer">{active.tokensPerSecond !== undefined ? formatSpeed(active.tokensPerSecond) : "– tok/s"}</span>
 				{#if active.costUsd > 0}<span>${active.costUsd.toFixed(4)}</span>{/if}
 			</div>
 		</div>
@@ -309,16 +291,6 @@
 		height: 8px;
 		border-radius: 2px;
 		background: hsl(var(--hue) 60% 55%);
-	}
-	.live .dot {
-		color: hsl(145 60% 45%);
-		font-size: 8px;
-		animation: pulse 1s ease-in-out infinite;
-	}
-	@keyframes pulse {
-		50% {
-			opacity: 0.3;
-		}
 	}
 	aside {
 		display: flex;

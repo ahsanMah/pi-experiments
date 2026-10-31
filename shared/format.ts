@@ -25,54 +25,5 @@ export const formatContext = (branch: BranchInfo): string | undefined => {
 export const formatSpeed = (tokensPerSecond: number): string =>
 	`${tokensPerSecond.toFixed(tokensPerSecond < 10 ? 1 : 0)} tok/s`;
 
-type PartialBlock = { type: string; text?: string; thinking?: string; arguments?: unknown };
-type Generation = { attempt?: number; message?: { content?: unknown; timestamp?: number } } | undefined;
-
 /** Rough token count of text: about four characters per token. */
 export const estimateTokens = (chars: number): number => chars / 4;
-
-/** Characters the model has written so far in a partial answer: text, thinking and tool-call arguments. */
-export const writtenChars = (content: unknown): number => {
-	if (typeof content === "string") return content.length;
-	if (!Array.isArray(content)) return 0;
-	let chars = 0;
-	for (const block of content as PartialBlock[]) {
-		if (block.type === "text") chars += block.text?.length ?? 0;
-		else if (block.type === "thinking") chars += block.thinking?.length ?? 0;
-		else if (block.type === "toolCall") chars += JSON.stringify(block.arguments ?? {}).length;
-	}
-	return chars;
-};
-
-/**
- * Output speed of the answer being streamed, from the throttled partial in `pi.live`. The clock starts at the
- * first written character, so time to first token doesn't count; token counts are estimated from characters.
- */
-export class LiveSpeed {
-	#key: string | undefined;
-	#start: { at: number; chars: number } | undefined;
-
-	/** Tokens per second so far, or undefined while nothing is streaming or it is too early to say. */
-	update(generation: Generation, now = Date.now()): number | undefined {
-		const message = generation?.message;
-		if (message === undefined) {
-			this.#key = undefined;
-			this.#start = undefined;
-			return undefined;
-		}
-		const key = `${message.timestamp ?? ""}:${generation?.attempt ?? ""}`;
-		if (key !== this.#key) {
-			this.#key = key;
-			this.#start = undefined;
-		}
-		const chars = writtenChars(message.content);
-		if (chars === 0) return undefined;
-		if (this.#start === undefined) {
-			this.#start = { at: now, chars };
-			return undefined;
-		}
-		const seconds = (now - this.#start.at) / 1000;
-		if (seconds < 0.5) return undefined;
-		return estimateTokens(chars - this.#start.chars) / seconds;
-	}
-}
