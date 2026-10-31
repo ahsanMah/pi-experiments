@@ -125,6 +125,27 @@ try {
 	);
 	assert(true, "a share with every branch marks each branch");
 
+	// A summary covers only the source's history after its lowest common ancestor with the target.
+	const summarize = async (from: number, to: number[], mode: "summary" | "transcript" = "summary") => {
+		const { noteIds } = await request<{ noteIds: string[] }>({ t: "share", mode, from: { conversationId: from }, to });
+		const tree = await until((t) => noteIds.every((id) => t.notes.some((n) => n.id === id)), "summary notes");
+		// The first line names the shared point; the summary body follows it.
+		return noteIds.map((id) => {
+			const text = tree.notes.find((n) => n.id === id)!.text;
+			return { text, body: text.startsWith("Branch") ? text.slice(text.indexOf("\n\n")) : text };
+		});
+	};
+	const [fromSide] = await summarize(side, [main.id]);
+	assert(
+		fromSide!.text.startsWith("Branch") && fromSide!.body.includes("Side question") && !fromSide!.body.includes("durable harness"),
+		`a fork's summary for its parent leaves out what they share:\n${fromSide!.text}`,
+	);
+	const [fromMain] = await summarize(main.id, [side]);
+	assert(
+		fromMain!.text.startsWith("Branch") && fromMain!.body.includes("storage backends") && !fromMain!.body.includes("durable harness") && !fromMain!.body.includes("Side question"),
+		`a parent's summary for its fork covers only what came after the fork point:\n${fromMain!.text}`,
+	);
+
 	// Rapid switching leaves the subscription in its last requested state.
 	for (let i = 0; i < 5; i++) {
 		socket.send(JSON.stringify({ t: "unsubscribe", conversationId: main.id }));
@@ -164,6 +185,31 @@ try {
 	);
 
 	// Malformed input gets an error and the server keeps serving.
+	// Transcripts take the same cut.
+	const [transcriptFromSide] = await summarize(side, [main.id], "transcript");
+	assert(
+		transcriptFromSide!.text.startsWith("Branch") &&
+			transcriptFromSide!.body.includes("User: Side question") &&
+			!transcriptFromSide!.body.includes("User: What is a durable harness?"),
+		`a fork's transcript for its parent leaves out what they share:\n${transcriptFromSide!.text.slice(0, 600)}`,
+	);
+
+	// Targets with different common ancestors get separate notes; an unrelated root gets the whole history.
+	await until((t) => t.branches.every((b) => !b.busy), "idle before split summary");
+	const { conversationId: root2 } = await request<{ conversationId: number }>({ t: "new", title: "Unrelated" });
+	const split = await summarize(main.id, [side, root2]);
+	const splitTranscript = await summarize(main.id, [side, root2], "transcript");
+	assert(
+		splitTranscript.length === 2 &&
+			splitTranscript.some((n) => n.text.startsWith("User: What is a durable harness?")) &&
+			splitTranscript.some((n) => n.text.startsWith("Branch") && !n.body.includes("User: What is a durable harness?")),
+		"transcripts to targets with different common ancestors are cut separately",
+	);
+	assert(
+		split.length === 2 && split.some((n) => n.text.includes("durable harness") && !n.text.startsWith("Branch")),
+		"targets with different common ancestors get separate notes; an unrelated branch gets the whole history",
+	);
+
 	socket.send("null");
 	socket.send("42");
 	await request({ t: "rename", conversationId: side, title: "Still alive" });

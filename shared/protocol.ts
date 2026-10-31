@@ -109,7 +109,9 @@ export type ClientMessage = { readonly requestId?: string } & (
 	| { readonly t: "new"; readonly title?: string }
 	| { readonly t: "rename"; readonly conversationId: ConversationId; readonly title: string }
 	| { readonly t: "configure"; readonly conversationId: ConversationId; readonly model: string }
-	/** Share context into other branches. Ack result: { noteId }. */
+	/** Share context into other branches. Ack result: { noteId, noteIds }. A summary or
+	 * transcript covers only the source's history after its lowest common ancestor with each target; targets with
+	 * different LCAs get separate notes (noteIds), noteId is the first. */
 	| {
 			readonly t: "share";
 			readonly mode: ShareMode;
