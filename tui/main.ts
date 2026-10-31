@@ -21,7 +21,7 @@ import {
 	TuiAltScreen,
 	VStack,
 } from "@earendil-works/pi-tui";
-import { contextShare, formatContext, formatSpeed } from "../shared/format.ts";
+import { contextShare, formatContext, formatSpeed, LiveSpeed } from "../shared/format.ts";
 import type { BranchInfo, ConversationId, TreeNode } from "../shared/protocol.ts";
 import { BranchesClient } from "./client.ts";
 import { pick, prompt, read } from "./dialogs.ts";
@@ -126,6 +126,8 @@ const notify = (text: string, kind: "info" | "error" = "info") => {
 
 const failed = (error: unknown) => notify(error instanceof Error ? error.message : String(error), "error");
 
+const liveSpeed = new LiveSpeed();
+
 const renderStatus = () => {
 	const branch = branchOf(active);
 	if (branch === undefined) {
@@ -142,7 +144,10 @@ const renderStatus = () => {
 		const share = contextShare(branch) ?? 0;
 		parts.push((share >= 0.9 ? style.red : share >= 0.7 ? style.yellow : style.dim)(`ctx ${context}`));
 	}
-	if (branch.tokensPerSecond !== undefined) parts.push(style.dim(formatSpeed(branch.tokensPerSecond)));
+	const generation = client.views.get(branch.id)?.docs["pi.live"]?.generation;
+	const live = liveSpeed.update(generation as never);
+	if (generation?.message !== undefined) parts.push(style.green(live !== undefined ? formatSpeed(live) : "… tok/s"));
+	else if (branch.tokensPerSecond !== undefined) parts.push(style.dim(formatSpeed(branch.tokensPerSecond)));
 	parts.push(style.dim(`$${branch.costUsd.toFixed(4)}`));
 	if (branch.sharedIn > 0) parts.push(style.magenta(`⇄ ${branch.sharedIn} shared`));
 	if (client.tree.suggestions.length > 0) parts.push(style.yellow(`✦ ${client.tree.suggestions.length} suggested (/suggestions)`));
