@@ -2,7 +2,7 @@
 // views of the conversations this tab is looking at, kept current by applying each
 // commit's Chord ops (the same `applyImmutable` pi-durable's watches are built on).
 import { applyImmutable } from "@earendil-works/chord/delta";
-import type { ClientMessage, ServerMessage, TreeIndex } from "../../../shared/protocol.ts";
+import type { ClientMessage, ServerMessage, ThinkingLevel, TreeIndex } from "../../../shared/protocol.ts";
 import { setBranchOrder } from "./layout.ts";
 import type { ConversationView } from "./view.ts";
 
@@ -24,6 +24,9 @@ export class BranchesClient {
 	views = $state<Record<number, ConversationView>>({});
 	models = $state<readonly string[]>([]);
 	defaultModel = $state("");
+	/** Thinking levels each model accepts, keyed by `provider/modelId`. */
+	thinkingLevels = $state<Readonly<Record<string, readonly ThinkingLevel[]>>>({});
+	defaultThinkingLevel = $state<ThinkingLevel>("off");
 	connected = $state(false);
 	errors = $state<string[]>([]);
 
@@ -60,6 +63,8 @@ export class BranchesClient {
 			case "hello":
 				this.models = message.models;
 				this.defaultModel = message.defaultModel;
+				this.thinkingLevels = message.thinkingLevels;
+				this.defaultThinkingLevel = message.defaultThinkingLevel;
 				break;
 			case "tree":
 				setBranchOrder(message.tree.branches.map((branch) => branch.id));

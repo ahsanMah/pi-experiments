@@ -16,8 +16,16 @@ pi-durable Harness (one process, SQLite) ── every branch is a conversation; 
 ```bash
 npm install
 npm run build                     # web client into web/dist
-PI_MODEL=anthropic/claude-sonnet-5-5 npm run server   # http://localhost:8787
+PI_MODEL=anthropic/claude-sonnet-5-5 npm run server   # http://<directory>-<hash>.localhost:<port>
 ```
+
+The URL is tied to the directory you start it in: the server derives a `<directory>-<hash>.localhost`
+hostname and a port from the working directory and prints both, so several projects can run at once.
+Browsers resolve any `*.localhost` name to loopback themselves, with no `/etc/hosts` entry, and the
+separate origin keeps each project's stored UI state (canvas positions, theme, panel width) apart.
+The OS resolver generally does not know those names, so the terminal client, the scripts and `curl`
+use `127.0.0.1` with the same port; `npm run tui` finds it by itself. If the port is taken, the
+server moves to the next free one above it. `PORT` pins a port, as before.
 
 The server uses your pi coding agent setup: credentials from `~/.pi/agent/auth.json` (API keys and `/login` subscriptions), custom providers from `models.json`, and the default model and thinking level from `settings.json`. It loads them through the coding agent's own `ModelRuntime`, so every model you can pick in `pi` is in each branch's model picker. `PI_CODING_AGENT_DIR` points it at another agent directory, `PI_MODEL` overrides the default, and environment keys (`ANTHROPIC_API_KEY`, …) work too. With no default model anywhere, it uses `faux/echo`, an offline model that echoes, so everything works without a key.
 
@@ -29,7 +37,7 @@ The server uses your pi coding agent setup: credentials from `~/.pi/agent/auth.j
 | `PI_BRANCHES_CWD` | unset | Enables pi-durable's coding tools (read, write, edit, bash) in this directory |
 | `PI_BRANCHES_CONTEXT_FILES` | `1` | `0` skips AGENTS.md / CLAUDE.md. Otherwise they are loaded as pi does: the one in pi's agent directory, then one per directory from the root down to `PI_BRANCHES_CWD` (else the server's directory), read at startup |
 | `PI_BRANCHES_SKILLS` | `1` | `0` skips skills. Otherwise, when `PI_BRANCHES_CWD` gives the models a read tool, skills are found by pi's own resource loader (pi's settings, packages, `~/.pi/agent/skills`, the project's `.pi/skills`) and listed in the system prompt as pi lists them; with `PI_BRANCHES_PI_CONFIG=0` only the project's `.pi/skills` |
-| `PORT` | `8787` | HTTP and WebSocket port |
+| `PORT` | derived from the working directory (8800–9799) | HTTP and WebSocket port |
 | `HOST` | `127.0.0.1` | Interface to listen on |
 
 `npm run build:demo` builds `web/dist-demo/pi-branches-demo.html`, a single page that runs the server in the browser with the echo model and a seeded tree. Nothing is saved.
@@ -47,6 +55,8 @@ For web development, run `npm run server` and `npm run web` (Vite on :5173, prox
 - **Spatial view.** *Spatial* in the overview bar (or the palette) swaps the chat for a canvas where every branch is a card you can read and type into, wired from the message it forked at. Zoom out for titles and status, in for whole answers; open a card to read it in full beside the canvas. Shared notes are sticky notes: drop one on a card to share it there, or drag a card's knob onto another to share a summary or transcript. *Chat* returns to the chat on the card you were on. Card positions are kept per browser; *Tidy* resets them.
 - **Overview.** The right panel draws every branch as one message tree, color-coded per branch, with the active path highlighted. Click a node to open it. Alt+O cycles side, full screen, and hidden. The viewport follows the chat unless pinned. Vertical and horizontal layouts are available, as in Open WebUI.
 - **Share context.** *Share…* on a message or node sends a model-written **summary** or the **transcript** of that branch up to there (either covers only the source's history after its lowest common ancestor with each target, with one line naming the last message they share; targets with different common ancestors get separate notes, and a share with every branch takes the whole history), or a **note** you write, to chosen branches or every branch. Shared notes are kept in a session-wide document and rendered into each target's system prompt, so they apply from the target's next model request, even mid-run. A marker in the target's transcript shows where a note arrived; expand it to read the note. The ⇄ badge in a branch's header lists every note that branch's model sees, and the sidebar lists all notes. Unshare from any of them. In the terminal, notes show under their marker and `/notes` opens each one in full.
+- **Model.** The model button in the chat header and on a spatial card opens a searchable list: type to fuzzy-match (`haiku55` finds `anthropic.claude-haiku-5-5`), ↑/↓ and Enter to pick, Escape to close. ⌘K's *Change model…* searches the same way. With a provider list of a couple of hundred models, a plain dropdown was unusable.
+- **Thinking level.** Next to the model picker in the chat header and on a spatial card, and as *Change thinking level…* in the ⌘K palette (`/thinking` in the terminal). It is per branch, so one branch can reason harder than its siblings, and only the levels the branch's model accepts are offered; models without reasoning show no picker. A branch with none of its own uses pi's default thinking level.
 - **Models know the tree.** Each branch's system prompt says which branch it is and where it forked, and the model gets `list_branches` (marks its own branch and what each started with), `read_branch`, `post_note`, and `suggest_branch`.
 - **Suggested branches.** A model can propose a side inquiry with `suggest_branch`. Nothing is created until you open it, from the card under that answer, the sidebar, or `/suggestions` in the terminal: then it forks after that answer and puts the proposed first message in the composer for you to edit and send.
 - **Names.** A new thread is "Main" and a branch is "Branch N" until you rename it (click the title in the web header, `r` in the terminal overview, or `/rename`). The offline echo model calls the tree tools when asked to "list branches", "post a note: …", or "suggest a branch about …".

@@ -31,6 +31,10 @@ export type TreeNode = {
 	readonly toolCalls?: number;
 };
 
+/** Reasoning effort, as pi-ai names them. Which ones a model accepts comes with `hello`. */
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
 export type BranchInfo = {
 	readonly id: ConversationId;
 	readonly title: string;
@@ -44,6 +48,8 @@ export type BranchInfo = {
 	readonly tip: EntryId | null;
 	/** `provider/modelId`, when set on the branch. */
 	readonly model?: string;
+	/** Reasoning effort, when set on the branch; otherwise the server default applies. */
+	readonly thinkingLevel?: ThinkingLevel;
 	readonly costUsd: number;
 	/** Context the branch's last model request used, and the model's window when known. */
 	readonly context?: { readonly tokens: number; readonly window?: number };
@@ -127,7 +133,13 @@ export type ClientMessage = { readonly requestId?: string } & (
 	| { readonly t: "delete"; readonly conversationId: ConversationId }
 	/** Bring back a deleted branch, with the branches forked from it that weren't deleted on their own. */
 	| { readonly t: "restore"; readonly conversationId: ConversationId }
-	| { readonly t: "configure"; readonly conversationId: ConversationId; readonly model: string }
+	/** Change the branch's model, its thinking level, or both. Omitted fields are left alone. */
+	| {
+			readonly t: "configure";
+			readonly conversationId: ConversationId;
+			readonly model?: string;
+			readonly thinkingLevel?: ThinkingLevel;
+	  }
 	/** Share context into other branches. Ack result: { noteId, noteIds }. A summary or
 	 * transcript covers only the source's history after its lowest common ancestor with each target; targets with
 	 * different LCAs get separate notes (noteIds), noteId is the first. */
@@ -150,7 +162,14 @@ export type ClientMessage = { readonly requestId?: string } & (
 );
 
 export type ServerMessage =
-	| { readonly t: "hello"; readonly models: readonly string[]; readonly defaultModel: string }
+	| {
+			readonly t: "hello";
+			readonly models: readonly string[];
+			readonly defaultModel: string;
+			/** Levels each model accepts, keyed by `provider/modelId`; a model without reasoning has `["off"]`. */
+			readonly thinkingLevels: Readonly<Record<string, readonly ThinkingLevel[]>>;
+			readonly defaultThinkingLevel: ThinkingLevel;
+	  }
 	| { readonly t: "tree"; readonly tree: TreeIndex }
 	/** Full ConversationView of a subscribed conversation, sent on subscribe and after the server falls behind. */
 	| { readonly t: "view"; readonly conversationId: ConversationId; readonly value: unknown }

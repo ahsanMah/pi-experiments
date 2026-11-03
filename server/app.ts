@@ -3,7 +3,7 @@
 // code runs the server (server/main.ts) and the in-browser demo (web/src/demo.ts).
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { Models } from "@earendil-works/pi-ai/models";
+import { getSupportedThinkingLevels, type Models } from "@earendil-works/pi-ai/models";
 import {
 	createRegistry,
 	Harness,
@@ -15,7 +15,7 @@ import {
 	type HarnessOptions,
 	type Storage,
 } from "@earendil-works/pi-durable";
-import type { BranchSuggestion, SharedNote, ShareMode, TreeIndex, TreeNode } from "../shared/protocol.ts";
+import type { BranchSuggestion, SharedNote, ShareMode, ThinkingLevel, TreeIndex, TreeNode } from "../shared/protocol.ts";
 import { BranchMetaDoc, createBranchesExtension, SHARED_ENTRY, SharedNotesDoc, SuggestionsDoc, type BranchPlace } from "./branches.ts";
 import { classify, textOf, TreeIndexer } from "./tree.ts";
 
@@ -41,13 +41,24 @@ export class BranchesApp {
 	readonly indexer: TreeIndexer;
 	readonly defaultModel: string;
 	readonly availableModels: readonly string[];
+	/** Levels each available model accepts, keyed by `provider/modelId`. */
+	readonly thinkingLevels: Readonly<Record<string, readonly ThinkingLevel[]>>;
+	/** The level a branch that has none of its own runs at. */
+	readonly defaultThinkingLevel: ThinkingLevel;
 	readonly #models: Models;
 	readonly #agent: AgentChange;
 	readonly #listeners = new Set<(tree: TreeIndex) => void>();
 	#tree: TreeIndex = { branches: [], nodes: [], notes: [], suggestions: [], deleted: [] };
 	#rebuild: { timer?: ReturnType<typeof setTimeout>; running?: Promise<void>; again?: boolean } = {};
 
-	private constructor(harness: Harness, models: Models, defaultModel: string, agent: AgentChange, available: string[]) {
+	private constructor(
+		harness: Harness,
+		models: Models,
+		defaultModel: string,
+		agent: AgentChange,
+		available: string[],
+		thinkingLevels: Record<string, readonly ThinkingLevel[]>,
+	) {
 		this.harness = harness;
 		this.indexer = new TreeIndexer(harness, (provider, modelId) => {
 			try {
@@ -60,6 +71,9 @@ export class BranchesApp {
 		this.#agent = agent;
 		this.defaultModel = defaultModel;
 		this.availableModels = available;
+		this.thinkingLevels = thinkingLevels;
+		// pi-durable resolves a conversation with no level of its own to "off" unless the host sets one.
+		this.defaultThinkingLevel = (agent.thinkingLevel as ThinkingLevel | undefined) ?? "off";
 	}
 
 	static async open(options: AppOptions, context: Context = BACKGROUND_CONTEXT): Promise<BranchesApp> {
@@ -93,12 +107,16 @@ export class BranchesApp {
 			context,
 		);
 
-		const available = (await models.getAvailable()).map((model: Model<Api>) => `${model.provider}/${model.id}`);
+		const list = await models.getAvailable();
+		const available = list.map((model: Model<Api>) => `${model.provider}/${model.id}`);
+		// Which levels each model accepts, so a client only ever offers valid ones.
+		const thinkingLevels: Record<string, readonly ThinkingLevel[]> = {};
+		for (const model of list) thinkingLevels[`${model.provider}/${model.id}`] = getSupportedThinkingLevels(model) as ThinkingLevel[];
 		const agent: AgentChange = {
 			model: parseModel(options.model),
 			...(options.thinkingLevel !== undefined ? { thinkingLevel: options.thinkingLevel } : {}),
 		};
-		app = new BranchesApp(harness, models, options.model, agent, available);
+		app = new BranchesApp(harness, models, options.model, agent, available, thinkingLevels);
 		await harness.root(context, { agent });
 		harness.resume();
 
@@ -230,8 +248,27 @@ export class BranchesApp {
 		await this.rebuildNow(context);
 	}
 
-	async configure(id: ConversationId, model: string, context: Context): Promise<void> {
-		await (await this.#conversation(id, context)).configure({ model: parseModel(model) }, context);
+	/** Set the branch's model, its thinking level, or both; omitted fields are left as they are. */
+	async configure(
+		id: ConversationId,
+		change: { model?: string; thinkingLevel?: ThinkingLevel },
+		context: Context,
+	): Promise<void> {
+		const { model, thinkingLevel } = change;
+		if (model === undefined && thinkingLevel === undefined) return;
+		if (thinkingLevel !== undefined) {
+			const ref = model ?? this.tree.branches.find((branch) => branch.id === id)?.model ?? this.defaultModel;
+			const allowed = this.thinkingLevels[ref];
+			if (allowed !== undefined && !allowed.includes(thinkingLevel))
+				throw new Error(`${ref} does not support thinking level "${thinkingLevel}"`);
+		}
+		await (await this.#conversation(id, context)).configure(
+			{
+				...(model !== undefined ? { model: parseModel(model) } : {}),
+				...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+			},
+			context,
+		);
 		await this.rebuildNow(context);
 	}
 

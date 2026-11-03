@@ -274,6 +274,7 @@ export class TreeIndexer {
 				queued: inbox?.items.length ?? 0,
 				tip: previousDisplayed,
 				...(agent?.model !== undefined ? { model: `${agent.model.provider}/${agent.model.modelId}` } : {}),
+				...(agent?.thinkingLevel !== undefined ? { thinkingLevel: agent.thinkingLevel } : {}),
 				costUsd,
 				...(stats?.contextTokens !== undefined
 					? { context: { tokens: stats.contextTokens, ...(window ? { window } : {}) } }

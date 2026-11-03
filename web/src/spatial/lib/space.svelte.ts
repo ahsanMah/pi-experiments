@@ -1,7 +1,7 @@
 // Workspace state shared by the canvas, its cards and the focus panel through Svelte context,
 // so card components read live data directly and the flow's node list only changes with layout.
 import { getContext, setContext } from "svelte";
-import type { ShareMode, SharedNote, TreeNode } from "../../../../shared/protocol.ts";
+import type { ShareMode, SharedNote, ThinkingLevel, TreeNode } from "../../../../shared/protocol.ts";
 import type { BranchesClient } from "../../lib/client.svelte.ts";
 import type { Point } from "./geometry.ts";
 
@@ -158,8 +158,9 @@ export class Space {
 		if (done && this.currentId !== null && doomed.has(this.currentId)) this.focus(null);
 	}
 
-	configure(conversationId: number, model: string) {
-		void this.#guard(this.client.request({ t: "configure", conversationId, model }));
+	/** Change a branch's model, its thinking level, or both. */
+	configure(conversationId: number, change: { model?: string; thinkingLevel?: ThinkingLevel }) {
+		void this.#guard(this.client.request({ t: "configure", conversationId, ...change }));
 	}
 
 	/** Share from the sheet; summaries show as a placeholder sticky until the model is done. */

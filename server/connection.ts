@@ -14,7 +14,13 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 	const watches = new Map<ConversationId, ConversationWatch>();
 	let closed = false;
 
-	send({ t: "hello", models: app.availableModels, defaultModel: app.defaultModel });
+	send({
+		t: "hello",
+		models: app.availableModels,
+		defaultModel: app.defaultModel,
+		thinkingLevels: app.thinkingLevels,
+		defaultThinkingLevel: app.defaultThinkingLevel,
+	});
 	send({ t: "tree", tree: app.tree });
 	const offTree = app.onTree((tree) => send({ t: "tree", tree }));
 
@@ -84,7 +90,14 @@ export const connect = (app: BranchesApp, send: (message: ServerMessage) => void
 			case "restore":
 				return app.restore(message.conversationId as ConversationId, context);
 			case "configure":
-				return app.configure(message.conversationId as ConversationId, message.model, context);
+				return app.configure(
+					message.conversationId as ConversationId,
+					{
+						...(message.model !== undefined ? { model: message.model } : {}),
+						...(message.thinkingLevel !== undefined ? { thinkingLevel: message.thinkingLevel } : {}),
+					},
+					context,
+				);
 			case "share": {
 				const notes = await app.share(
 					{
