@@ -51,6 +51,10 @@ export type BranchInfo = {
 	/** Reasoning effort, when set on the branch; otherwise the server default applies. */
 	readonly thinkingLevel?: ThinkingLevel;
 	readonly costUsd: number;
+	/** Context the branch's last model request used, and the model's window when known. */
+	readonly context?: { readonly tokens: number; readonly window?: number };
+	/** Output speed of the branch's last answer, in tokens per second. */
+	readonly tokensPerSecond?: number;
 	/** Number of shared-context notes this branch's model sees. */
 	readonly sharedIn: number;
 };

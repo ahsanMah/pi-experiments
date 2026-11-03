@@ -371,6 +371,7 @@
 		<Sidebar
 			tree={client.tree}
 			{activeId}
+			view={activeId === undefined ? undefined : client.views[activeId]}
 			select={(id) => open(id)}
 			create={async () => {
 				const { conversationId } = await client.request<{ conversationId: number }>({ t: "new" });
