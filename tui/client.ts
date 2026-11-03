@@ -36,7 +36,7 @@ export type ConversationView = {
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void };
 
 export class BranchesClient {
-	tree: TreeIndex = { branches: [], nodes: [], notes: [], suggestions: [] };
+	tree: TreeIndex = { branches: [], nodes: [], notes: [], suggestions: [], deleted: [] };
 	models: readonly string[] = [];
 	defaultModel = "";
 	readonly views = new Map<ConversationId, ConversationView>();

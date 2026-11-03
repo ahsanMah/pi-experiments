@@ -26,7 +26,7 @@ import type { BranchInfo, ConversationId, TreeNode } from "../shared/protocol.ts
 import { BranchesClient } from "./client.ts";
 import { pick, prompt, read } from "./dialogs.ts";
 import { OverviewList, OverviewPanel } from "./overview.ts";
-import { editorTheme, SPINNER, style } from "./theme.ts";
+import { currentTheme, editorTheme, setTheme, SPINNER, style, THEMES } from "./theme.ts";
 import { TranscriptView } from "./transcript.ts";
 
 const url = process.env.PI_BRANCHES_URL ?? `ws://localhost:${process.env.PORT ?? 8787}/ws`;
@@ -61,7 +61,7 @@ class Line implements Component {
 
 const status = new Line();
 const notice = new Line();
-const footer = new Line(style.dim("ctrl+o overview · /help commands · ctrl+c quit"));
+const footer = new Line(style.dim("ctrl+o overview · ctrl+t thinking · ctrl+x tool output · /help commands · ctrl+c quit"));
 const editor = new Editor(tui, editorTheme);
 
 const commands = [
@@ -69,6 +69,8 @@ const commands = [
 	{ name: "new", description: "Start a new, unrelated thread: /new [title]" },
 	{ name: "fork", description: "Branch after this branch's latest message: /fork [title]" },
 	{ name: "rename", description: "Rename this branch: /rename <title>" },
+	{ name: "delete", description: "Delete this branch and the branches forked from it" },
+	{ name: "restore", description: "Bring back a deleted branch" },
 	{ name: "model", description: "Set this branch's model: /model [provider/id]" },
 	{ name: "share-note", description: "Share a note with every branch: /share-note <text>" },
 	{ name: "share", description: "Share this branch (summary or transcript) into other branches" },
@@ -76,6 +78,7 @@ const commands = [
 	{ name: "suggestions", description: "Open or dismiss branches the models suggested" },
 	{ name: "abort", description: "Stop this branch's current run" },
 	{ name: "steer", description: "Steer the running work: /steer <text>" },
+	{ name: "theme", description: `Switch colors: /theme [${Object.keys(THEMES).join("|")}]` },
 	{ name: "help", description: "Show commands and keys" },
 ];
 editor.setAutocompleteProvider(new CombinedAutocompleteProvider(commands, process.cwd()));
@@ -435,6 +438,34 @@ const runCommand = async (line: string) => {
 		case "rename":
 			if (!arg) return branch && rename(branch);
 			return client.request({ t: "rename", conversationId: active, title: arg });
+		case "delete": {
+			if (branch === undefined) return;
+			const doomed = new Set<number>([branch.id]);
+			for (const b of client.tree.branches) if (b.parent !== undefined && doomed.has(b.parent.conversationId)) doomed.add(b.id);
+			const forks = doomed.size - 1;
+			const answer = await withModal(() =>
+				pick(tui, `Delete "${titleOf(branch)}"${forks > 0 ? ` and ${forks} fork${forks === 1 ? "" : "s"}` : ""}?`, [
+					{ value: "keep", label: "Keep it" },
+					{ value: "delete", label: "Delete" },
+				]),
+			);
+			if (answer !== "delete") return;
+			await client.request({ t: "delete", conversationId: active });
+			const next = branch.parent !== undefined && !doomed.has(branch.parent.conversationId) ? branch.parent.conversationId : client.tree.branches.find((b) => !doomed.has(b.id))?.id;
+			if (next !== undefined) await switchTo(next as ConversationId);
+			return notify(`Deleted "${titleOf(branch)}".`);
+		}
+		case "restore": {
+			const deleted = client.tree.deleted;
+			if (deleted.length === 0) return notify("No deleted branches.");
+			const picked = await withModal(() =>
+				pick(tui, "Restore a deleted branch", deleted.map((d) => ({ value: String(d.id), label: d.title, description: `${new Date(d.deletedAt).toLocaleString()}${d.forks > 0 ? ` · with ${d.forks} fork${d.forks === 1 ? "" : "s"}` : ""}` }))),
+			);
+			if (picked === undefined) return;
+			await client.request({ t: "restore", conversationId: Number(picked) });
+			await switchTo(Number(picked) as ConversationId);
+			return notify(`Restored "${deleted.find((d) => d.id === Number(picked))?.title}".`);
+		}
 		case "model": {
 			const model = arg || (await withModal(() => pick(tui, "Model for this branch", client.models.map((m) => ({ value: m, label: m })))));
 			if (!model) return;
@@ -457,6 +488,13 @@ const runCommand = async (line: string) => {
 		case "steer":
 			if (!arg) return notify("Usage: /steer <text>", "error");
 			return client.request({ t: "send", conversationId: active, text: arg, whenBusy: "steer" });
+		case "theme": {
+			const name = arg || (await withModal(() => pick(tui, `Theme (now ${currentTheme()})`, Object.keys(THEMES).map((t) => ({ value: t, label: t })))));
+			if (!name) return;
+			if (!setTheme(name)) return notify(`Unknown theme "${name}". Themes: ${Object.keys(THEMES).join(", ")}.`, "error");
+			refresh();
+			return notify(`Theme set to ${name}.`);
+		}
 		case "help":
 			return help();
 		default:
@@ -482,6 +520,16 @@ tui.addInputListener((data) => {
 		tui.stop();
 		client.close();
 		process.exit(0);
+	}
+	if (matchesKey(data, Key.ctrl("t")) && !modal) {
+		transcript.setOptions({ showThinking: !transcript.options.showThinking });
+		refresh();
+		return { consume: true };
+	}
+	if (matchesKey(data, Key.ctrl("x")) && !modal) {
+		transcript.setOptions({ expandTools: !transcript.options.expandTools });
+		refresh();
+		return { consume: true };
 	}
 	if (matchesKey(data, Key.ctrl("o")) && !modal) {
 		if (overview === undefined) openOverview();
