@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { contextShare, formatSpeed, formatTokens } from "../../../shared/format.ts";
+	import { contextBreakdown } from "../lib/context.ts";
+	import type { ConversationView } from "../lib/view.ts";
 	import type { BranchInfo, SharedNote, TreeIndex } from "../../../shared/protocol.ts";
 	import { branchHue } from "../lib/layout.ts";
 	import NoteCard from "./NoteCard.svelte";
@@ -7,6 +10,8 @@
 	type Props = {
 		tree: TreeIndex;
 		activeId: number | undefined;
+		/** The open branch's view, for the context breakdown. */
+		view: ConversationView | undefined;
 		select: (id: number) => void;
 		create: () => void;
 		forkTip: () => void;
@@ -19,7 +24,7 @@
 		theme: "system" | "light" | "dark";
 		cycleTheme: () => void;
 	};
-	let { tree, activeId, select, create, forkTip, newNote, unshare, accept, dismiss, commands, theme, cycleTheme }: Props = $props();
+	let { tree, activeId, view, select, create, forkTip, newNote, unshare, accept, dismiss, commands, theme, cycleTheme }: Props = $props();
 
 	/** Branches in tree order: each fork listed under the branch it came from. */
 	const ordered = $derived.by(() => {
@@ -72,6 +77,17 @@
 		return perRow;
 	});
 
+	const active = $derived(tree.branches.find((b) => b.id === activeId));
+	const share = $derived(active === undefined ? undefined : contextShare(active));
+
+	// What fills the context, estimated from the view and scaled to the last request's real size.
+	const parts = $derived(view === undefined ? [] : contextBreakdown(view, active?.context?.tokens));
+	const partsTotal = $derived(parts.reduce((sum, p) => sum + p.tokens, 0));
+	const PART_HUES = [265, 205, 145, 35, 300, 15, 175, 90];
+	/** Width of the meter: the window when known, else the parts themselves. */
+	const meterScale = $derived(active?.context?.window ?? partsTotal);
+
+
 	const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl+";
 
 	const titleOf = (id: number) => tree.branches.find((b) => b.id === id)?.title ?? "another branch";
@@ -114,6 +130,53 @@
 		{/each}
 	</ul>
 
+	{#if active !== undefined}
+		<div class="section-head">
+			<h2>Context</h2>
+		</div>
+		<div class="context">
+			<div class="context-line" title="Size of {active.title}'s last model request">
+				{#if active.context !== undefined}
+					<span>{formatTokens(active.context.tokens)}{#if active.context.window}<span class="muted">{` / ${formatTokens(active.context.window)}`}</span>{/if} tokens</span>
+					{#if share !== undefined}<span class="muted">{Math.round(share * 100)}%</span>{/if}
+				{:else if partsTotal > 0}
+					<span>≈{formatTokens(partsTotal)} tokens</span><span class="muted">estimated</span>
+				{:else}
+					<span class="muted">No model request yet</span>
+				{/if}
+			</div>
+			{#if parts.length > 0 && meterScale > 0}
+				<div class="meter" class:warn={(share ?? 0) >= 0.7} class:full={(share ?? 0) >= 0.9}>
+					{#each parts as part, i (part.label)}
+						<div style="width: {(part.tokens / meterScale) * 100}%; --hue: {PART_HUES[i % PART_HUES.length]}" title="{part.label}: ≈{formatTokens(part.tokens)}"></div>
+					{/each}
+				</div>
+				<ul class="parts">
+					{#each parts as part, i (part.label)}
+						<li>
+							{#if part.detail}
+								<details>
+									<summary><span class="swatch" style="--hue: {PART_HUES[i % PART_HUES.length]}"></span><span class="part-name">{part.label}</span><span class="muted">≈{formatTokens(part.tokens)}</span></summary>
+									<ul class="detail">
+										{#each part.detail as d (d.label)}
+											<li><span class="part-name">{d.label}</span><span class="muted">≈{formatTokens(d.tokens)}</span></li>
+										{/each}
+									</ul>
+								</details>
+							{:else}
+								<div class="row"><span class="swatch" style="--hue: {PART_HUES[i % PART_HUES.length]}"></span><span class="part-name">{part.label}</span><span class="muted">≈{formatTokens(part.tokens)}</span></div>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			<div class="context-line muted">
+				<span title="Speed of the last answer">{active.tokensPerSecond !== undefined ? formatSpeed(active.tokensPerSecond) : "– tok/s"}</span>
+				{#if active.costUsd > 0}<span>${active.costUsd.toFixed(4)}</span>{/if}
+			</div>
+		</div>
+	{/if}
+
 	{#if tree.suggestions.length > 0}
 		<div class="section-head">
 			<h2>Suggested branches</h2>
@@ -148,6 +211,87 @@
 </aside>
 
 <style>
+	.context {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		padding: 2px 8px 8px;
+		font-size: 12px;
+	}
+	.context-line {
+		display: flex;
+		justify-content: space-between;
+		gap: 8px;
+	}
+	.muted {
+		color: var(--text-muted);
+	}
+	.meter {
+		height: 4px;
+		border-radius: 2px;
+		background: var(--border);
+		overflow: hidden;
+	}
+	.meter {
+		display: flex;
+		height: 6px;
+		gap: 1px;
+	}
+	.meter div {
+		height: 100%;
+		background: hsl(var(--hue) 60% 55%);
+	}
+	.meter.warn {
+		outline: 1px solid hsl(38 90% 50%);
+	}
+	.meter.full {
+		outline: 1px solid hsl(0 70% 55%);
+	}
+	.parts,
+	.detail {
+		margin: 0;
+		font-size: 11.5px;
+	}
+	.parts summary,
+	.parts .row,
+	.detail li {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 1px 0;
+	}
+	.parts summary {
+		cursor: pointer;
+		list-style: none;
+	}
+	.parts summary::-webkit-details-marker {
+		display: none;
+	}
+	.parts summary::after {
+		content: "▸";
+		color: var(--text-muted);
+		font-size: 9px;
+	}
+	.parts details[open] summary::after {
+		content: "▾";
+	}
+	.detail {
+		padding-left: 14px;
+	}
+	.part-name {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.swatch {
+		flex: none;
+		width: 8px;
+		height: 8px;
+		border-radius: 2px;
+		background: hsl(var(--hue) 60% 55%);
+	}
 	aside {
 		display: flex;
 		flex-direction: column;

@@ -45,6 +45,10 @@ export type BranchInfo = {
 	/** `provider/modelId`, when set on the branch. */
 	readonly model?: string;
 	readonly costUsd: number;
+	/** Context the branch's last model request used, and the model's window when known. */
+	readonly context?: { readonly tokens: number; readonly window?: number };
+	/** Output speed of the branch's last answer, in tokens per second. */
+	readonly tokensPerSecond?: number;
 	/** Number of shared-context notes this branch's model sees. */
 	readonly sharedIn: number;
 };
