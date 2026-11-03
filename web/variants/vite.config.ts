@@ -24,6 +24,6 @@ const config = (mode: string) => ({
 	build: {
 		outDir: "dist",
 		emptyOutDir: true,
-		...(mode === "demo" ? { cssCodeSplit: false, chunkSizeWarningLimit: 2000, rollupOptions: { output: { inlineDynamicImports: true } } } : {}),
+		...(mode === "demo" ? { assetsInlineLimit: Number.MAX_SAFE_INTEGER, cssCodeSplit: false, chunkSizeWarningLimit: 2000, rollupOptions: { output: { inlineDynamicImports: true } } } : {}),
 	},
 });

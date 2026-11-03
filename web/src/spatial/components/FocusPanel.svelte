@@ -129,6 +129,7 @@
 		</select>
 		<button class="icon" onclick={() => branch.tip !== null && space.fork(branch.id, branch.tip)} disabled={branch.tip === null} title="Branch from the latest message (B)" aria-label="Branch from the latest message"><Icon name="branch" /></button>
 		<button class="icon" onclick={() => (space.sheet = { from: { conversationId: branch.id } })} title="Share this branch…" aria-label="Share this branch"><Icon name="share" /></button>
+		<button class="icon" onclick={() => void space.remove(branch.id)} title="Delete this branch…" aria-label="Delete this branch"><Icon name="trash" /></button>
 		<button class="icon close" onclick={() => space.focus(null)} title="Close (Esc)" aria-label="Close"><Icon name="close" /></button>
 	</header>
 

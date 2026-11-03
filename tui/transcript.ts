@@ -1,6 +1,7 @@
 // The active branch's transcript: committed entries of its ConversationView, then the
 // live partial answer and tool round from docs["pi.live"]. Entries are immutable, so
 // each entry's components are built once and reused across commits.
+import { restoreMathBrackets } from "../shared/math.ts";
 import { Box, type Component, Container, Markdown, Spacer, Text, TruncatedText } from "@earendil-works/pi-tui";
 import type { BranchInfo, BranchSuggestion, SharedNote } from "../shared/protocol.ts";
 import type { ConversationView, LiveToolSlot, ViewEntry } from "./client.ts";
@@ -103,14 +104,14 @@ const renderEntry = (entry: ViewEntry, options: TranscriptOptions): Component[] 
 	const message = entry.model?.[0];
 	switch (entry.kind) {
 		case "pi.user":
-			return [new Spacer(1), new Markdown(textOf(message?.content), 1, 0, markdownTheme, { bgColor: style.userBg })];
+			return [new Spacer(1), new Markdown(restoreMathBrackets(textOf(message?.content)), 1, 0, markdownTheme, { bgColor: style.userBg })];
 		case "pi.assistant": {
 			const parts: Component[] = [];
 			const blocks = blocksOf(message?.content);
 			const thinking = thinkingOf(blocks);
 			if (thinking.trim() !== "") parts.push(new Spacer(1), ...thinkingBlock(thinking, options));
 			const text = textOf(message?.content);
-			if (text.trim() !== "") parts.push(new Spacer(1), new Markdown(text, 1, 0, markdownTheme));
+			if (text.trim() !== "") parts.push(new Spacer(1), new Markdown(restoreMathBrackets(text), 1, 0, markdownTheme));
 			for (const block of blocks) if (block.type === "toolCall") parts.push(new Spacer(1), toolCallBlock(block, options));
 			return parts;
 		}
@@ -221,7 +222,7 @@ export class TranscriptView extends Container {
 			const text = textOf(partial);
 			if (text.trim() !== "") {
 				this.addChild(new Spacer(1));
-				this.addChild(new Markdown(text, 1, 0, markdownTheme));
+				this.addChild(new Markdown(restoreMathBrackets(text), 1, 0, markdownTheme));
 			}
 			for (const block of blocksOf(partial)) {
 				if (block.type !== "toolCall") continue;

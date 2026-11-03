@@ -146,6 +146,18 @@ export class Space {
 		if (title.trim() !== "") void this.#guard(this.client.request({ t: "rename", conversationId, title: title.trim() }));
 	}
 
+	/** Delete a branch with every branch forked from it, after the user confirms. */
+	async remove(conversationId: number) {
+		const branches = this.client.tree.branches;
+		const doomed = new Set([conversationId]);
+		for (const b of branches) if (b.parent !== undefined && doomed.has(b.parent.conversationId)) doomed.add(b.id);
+		const title = branches.find((b) => b.id === conversationId)?.title ?? "this branch";
+		const forks = doomed.size - 1;
+		if (!confirm(`Delete "${title}"${forks > 0 ? ` and ${forks} branch${forks === 1 ? "" : "es"} forked from it` : ""}?`)) return;
+		const done = await this.#guard(this.client.request({ t: "delete", conversationId }).then(() => true));
+		if (done && this.currentId !== null && doomed.has(this.currentId)) this.focus(null);
+	}
+
 	configure(conversationId: number, model: string) {
 		void this.#guard(this.client.request({ t: "configure", conversationId, model }));
 	}
