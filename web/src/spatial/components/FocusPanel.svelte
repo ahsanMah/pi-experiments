@@ -3,7 +3,7 @@
 	// it (full screen on phones), so you can watch other branches while reading this one.
 	import { tick, untrack } from "svelte";
 	import { cubicOut } from "svelte/easing";
-	import type { BranchInfo } from "../../../../shared/protocol.ts";
+	import type { BranchInfo, ThinkingLevel } from "../../../../shared/protocol.ts";
 	import { branchHue } from "../../lib/layout.ts";
 	import { renderMarkdown } from "../../lib/markdown.ts";
 	import { textOf, type ViewEntry } from "../../lib/view.ts";
@@ -16,6 +16,8 @@
 	const space = useSpace();
 	const client = space.client;
 
+	// Only the levels this branch's model accepts; hidden when there is no real choice.
+	const levels = $derived(client.thinkingLevels[branch.model ?? client.defaultModel] ?? []);
 	const view = $derived(client.views[branch.id]);
 	const entries = $derived(view?.entries ?? []);
 	const results = $derived(
@@ -123,10 +125,20 @@
 			</div>
 		</div>
 		{#if branch.sharedIn > 0}<span class="chip shared" title="Shared notes this branch's model sees"><Icon name="sticky" size={12} />{branch.sharedIn}</span>{/if}
-		<select value={branch.model ?? client.defaultModel} onchange={(e) => space.configure(branch.id, e.currentTarget.value)} title="Model for this branch" aria-label="Model">
+		<select value={branch.model ?? client.defaultModel} onchange={(e) => space.configure(branch.id, { model: e.currentTarget.value })} title="Model for this branch" aria-label="Model">
 			{#if branch.model && !client.models.includes(branch.model)}<option value={branch.model}>{branch.model}</option>{/if}
 			{#each client.models as model (model)}<option value={model}>{model}</option>{/each}
 		</select>
+		{#if levels.length > 1}
+			<select
+				value={branch.thinkingLevel ?? client.defaultThinkingLevel}
+				onchange={(e) => space.configure(branch.id, { thinkingLevel: e.currentTarget.value as ThinkingLevel })}
+				title="Thinking level for this branch"
+				aria-label="Thinking level"
+			>
+				{#each levels as level (level)}<option value={level}>{level === "off" ? "no thinking" : `thinking: ${level}`}</option>{/each}
+			</select>
+		{/if}
 		<button class="icon" onclick={() => branch.tip !== null && space.fork(branch.id, branch.tip)} disabled={branch.tip === null} title="Branch from the latest message (B)" aria-label="Branch from the latest message"><Icon name="branch" /></button>
 		<button class="icon" onclick={() => (space.sheet = { from: { conversationId: branch.id } })} title="Share this branch…" aria-label="Share this branch"><Icon name="share" /></button>
 		<button class="icon" onclick={() => void space.remove(branch.id)} title="Delete this branch…" aria-label="Delete this branch"><Icon name="trash" /></button>

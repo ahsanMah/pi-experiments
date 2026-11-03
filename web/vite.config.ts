@@ -11,6 +11,9 @@ export default defineConfig(({ mode }) => ({
 	optimizeDeps: { entries: ["index.html"] },
 	server: {
 		port: Number(process.env.WEB_PORT ?? 5173),
+		// The server prints a `<directory>.localhost` URL; allow those names here too, since Vite
+		// otherwise rejects requests whose Host header it does not recognise.
+		allowedHosts: [".localhost"],
 		proxy: { "/ws": { target: `ws://localhost:${process.env.PORT ?? 8787}`, ws: true } },
 	},
 	build: {

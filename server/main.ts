@@ -18,11 +18,16 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { CodingTools } from "@earendil-works/pi-durable/tools";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { ClientMessage, ServerMessage } from "../shared/protocol.ts";
+import { PORT_PROBES, siteForCwd } from "../shared/site.ts";
 import { BranchesApp } from "./app.ts";
 import { connect } from "./connection.ts";
 import { echoProvider } from "./echo.ts";
 
-const port = Number(process.env.PORT ?? 8787);
+// The hostname and default port come from the directory the server runs in, so two projects
+// can run at once and the browser keeps their stored UI state on separate origins. PORT pins
+// the port instead of deriving one; HOST changes only the interface, not the printed hostname.
+const site = siteForCwd(process.cwd());
+const fixedPort = process.env.PORT === undefined ? undefined : Number(process.env.PORT);
 // No authentication, so only local clients by default.
 const host = process.env.HOST ?? "127.0.0.1";
 const database = process.env.PI_BRANCHES_DB ?? "./branches.sqlite";
@@ -93,6 +98,12 @@ const server = createServer((request, response) => {
 
 const wss = new WebSocketServer({ server, path: "/ws" });
 
+// ws re-emits the HTTP server's errors, so without a listener a taken port would crash the
+// process before `listen` below can try the next one. That case is handled there; report the rest.
+wss.on("error", (error: NodeJS.ErrnoException) => {
+	if (error.code !== "EADDRINUSE") console.error(error);
+});
+
 wss.on("connection", (socket: WebSocket) => {
 	const connection = connect(
 		app,
@@ -114,9 +125,28 @@ wss.on("connection", (socket: WebSocket) => {
 	socket.on("close", () => connection.close());
 });
 
-server.listen(port, host, () => {
-	console.log(`pi-branches on http://${host}:${port} (model ${setup.model} from ${setup.source}, storage ${database})`);
+// Try the derived port, then the few above it, so a second project in a directory that hashes
+// to the same port still starts. The terminal client probes the same range. One 'listening'
+// handler for all the attempts: a per-attempt callback would stay registered after its attempt
+// failed and announce the wrong port when a later one succeeded.
+server.on("listening", () => {
+	const address = server.address();
+	const port = typeof address === "object" && address !== null ? address.port : 0;
+	// `*.localhost` is resolved by browsers themselves; other clients use the address and port.
+	const browser = host === "127.0.0.1" || host === "localhost" ? `http://${site.host}:${port}` : `http://${host}:${port}`;
+	console.log(`pi-branches on ${browser} (${host}:${port}) for ${process.cwd()}`);
+	console.log(`  model ${setup.model} from ${setup.source}, storage ${database}`);
 });
+
+const listen = (port: number, remaining: number): void => {
+	server.once("error", (error: NodeJS.ErrnoException) => {
+		if (error.code !== "EADDRINUSE" || remaining === 0) throw error;
+		console.log(`port ${port} is taken, trying ${port + 1}`);
+		listen(port + 1, remaining - 1);
+	});
+	server.listen(port, host);
+};
+listen(fixedPort ?? site.port, fixedPort === undefined ? PORT_PROBES - 1 : 0);
 
 const shutdown = async () => {
 	wss.close();

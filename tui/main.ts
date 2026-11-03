@@ -21,23 +21,42 @@ import {
 	TuiAltScreen,
 	VStack,
 } from "@earendil-works/pi-tui";
-import type { BranchInfo, ConversationId, TreeNode } from "../shared/protocol.ts";
+import type { BranchInfo, ConversationId, ThinkingLevel, TreeNode } from "../shared/protocol.ts";
+import { PORT_PROBES, siteForCwd } from "../shared/site.ts";
 import { BranchesClient } from "./client.ts";
 import { pick, prompt, read } from "./dialogs.ts";
 import { OverviewList, OverviewPanel } from "./overview.ts";
 import { currentTheme, editorTheme, setTheme, SPINNER, style, THEMES } from "./theme.ts";
 import { TranscriptView } from "./transcript.ts";
 
-const url = process.env.PI_BRANCHES_URL ?? `ws://localhost:${process.env.PORT ?? 8787}/ws`;
+// The server derives its port from the directory it runs in, and starts on one of the few
+// ports above that when the first is taken, so try the same range here. The `*.localhost`
+// hostname it prints is for browsers only: the OS resolver does not know it, so connect to
+// the loopback address. PI_BRANCHES_URL or PORT points somewhere else.
+const candidates = ((): string[] => {
+	if (process.env.PI_BRANCHES_URL !== undefined) return [process.env.PI_BRANCHES_URL];
+	if (process.env.PORT !== undefined) return [`ws://127.0.0.1:${Number(process.env.PORT)}/ws`];
+	const { port } = siteForCwd(process.cwd());
+	return Array.from({ length: PORT_PROBES }, (_, index) => `ws://127.0.0.1:${port + index}/ws`);
+})();
 
-let client: BranchesClient;
-try {
-	client = await BranchesClient.connect(url);
-} catch (error) {
-	console.error(`Could not reach the branches server at ${url}: ${error instanceof Error ? error.message : String(error)}`);
-	console.error("Start it with `npm run server`, or set PI_BRANCHES_URL.");
+let connected: BranchesClient | undefined;
+let failure: unknown;
+for (const candidate of candidates) {
+	try {
+		connected = await BranchesClient.connect(candidate);
+		break;
+	} catch (error) {
+		failure = error;
+	}
+}
+if (connected === undefined) {
+	const where = candidates.length === 1 ? candidates[0] : `${candidates[0]} and the ${candidates.length - 1} ports above it`;
+	console.error(`Could not reach the branches server at ${where}: ${failure instanceof Error ? failure.message : String(failure)}`);
+	console.error("Start it with `npm run server` in this directory, or set PI_BRANCHES_URL.");
 	process.exit(1);
 }
+const client: BranchesClient = connected;
 
 const terminal = new ProcessTerminal();
 const tui: TUI = new TuiAltScreen(terminal);
@@ -71,6 +90,7 @@ const commands = [
 	{ name: "delete", description: "Delete this branch and the branches forked from it" },
 	{ name: "restore", description: "Bring back a deleted branch" },
 	{ name: "model", description: "Set this branch's model: /model [provider/id]" },
+	{ name: "thinking", description: "Set this branch's thinking level: /thinking [off|minimal|low|medium|high|xhigh|max]" },
 	{ name: "share-note", description: "Share a note with every branch: /share-note <text>" },
 	{ name: "share", description: "Share this branch (summary or transcript) into other branches" },
 	{ name: "notes", description: "Read shared notes and unshare them" },
@@ -139,6 +159,8 @@ const renderStatus = () => {
 	parts.push(branch.busy ? style.yellow(`${spinner()} working`) : style.green("idle"));
 	if (branch.queued > 0) parts.push(style.yellow(`${branch.queued} queued`));
 	if (branch.model !== undefined) parts.push(style.dim(branch.model));
+	const level = branch.thinkingLevel ?? client.defaultThinkingLevel;
+	if (level !== "off") parts.push(style.dim(`thinking: ${level}`));
 	parts.push(style.dim(`$${branch.costUsd.toFixed(4)}`));
 	if (branch.sharedIn > 0) parts.push(style.magenta(`⇄ ${branch.sharedIn} shared`));
 	if (client.tree.suggestions.length > 0) parts.push(style.yellow(`✦ ${client.tree.suggestions.length} suggested (/suggestions)`));
@@ -464,6 +486,26 @@ const runCommand = async (line: string) => {
 			if (!model) return;
 			await client.request({ t: "configure", conversationId: active, model });
 			return notify(`Model set to ${model} for this branch.`);
+		}
+		case "thinking": {
+			const branch = branchOf(active);
+			const levels = client.thinkingLevels[branch?.model ?? client.defaultModel] ?? [];
+			if (levels.length <= 1) return notify(`${branch?.model ?? client.defaultModel} has no thinking levels to choose from.`, "error");
+			const current = branch?.thinkingLevel ?? client.defaultThinkingLevel;
+			const level =
+				arg ||
+				(await withModal(() =>
+					pick(
+						tui,
+						"Thinking level for this branch",
+						levels.map((l) => ({ value: l, label: l === current ? `${l} (current)` : l })),
+					),
+				));
+			if (!level) return;
+			if (!levels.includes(level as ThinkingLevel))
+				return notify(`${branch?.model ?? client.defaultModel} does not support "${level}". Choose one of: ${levels.join(", ")}.`, "error");
+			await client.request({ t: "configure", conversationId: active, thinkingLevel: level as ThinkingLevel });
+			return notify(`Thinking level set to ${level} for this branch.`);
 		}
 		case "share-note":
 			if (!arg) return notify("Usage: /share-note <text>", "error");

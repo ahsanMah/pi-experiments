@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick, untrack } from "svelte";
-	import type { BranchInfo, BranchSuggestion, SharedNote, TreeNode } from "../../../shared/protocol.ts";
+	import type { BranchInfo, BranchSuggestion, SharedNote, ThinkingLevel, TreeNode } from "../../../shared/protocol.ts";
 	import { forkOptions, indexForks } from "../lib/forks.ts";
 	import { branchHue } from "../lib/layout.ts";
 	import { renderMarkdown } from "../lib/markdown.ts";
@@ -22,6 +22,12 @@
 		accept: (id: string) => Promise<void>;
 		dismiss: (id: string) => void;
 		models: readonly string[];
+		/** The model a branch with none of its own runs on. */
+		defaultModel: string;
+		/** Thinking levels each model accepts, keyed by `provider/modelId`. */
+		thinkingLevels: Readonly<Record<string, readonly ThinkingLevel[]>>;
+		/** The level a branch with none of its own runs at. */
+		defaultThinkingLevel: ThinkingLevel;
 		focusId: number | null;
 		/** Where a fork switcher was on screen when it opened this branch, to put it back there. */
 		anchor: { at: number; top: number } | null;
@@ -34,9 +40,13 @@
 		editBranch: (node: TreeNode) => void;
 		share: (entryId: number) => void;
 		rename: (title: string) => void;
-		configure: (model: string) => void;
+		configure: (change: { model?: string; thinkingLevel?: ThinkingLevel }) => void;
 	};
-	let { branch, view, nodes, notes, branches, openBranch, unshare, suggestions, accept, dismiss, models, focusId, anchor, switchAt, draft = $bindable(), send, abort, branchAfter, editBranch, share, rename, configure }: Props = $props();
+	let { branch, view, nodes, notes, branches, openBranch, unshare, suggestions, accept, dismiss, models, defaultModel, thinkingLevels, defaultThinkingLevel, focusId, anchor, switchAt, draft = $bindable(), send, abort, branchAfter, editBranch, share, rename, configure }: Props = $props();
+
+	// Only the levels this branch's model accepts; a model without reasoning offers "off" alone,
+	// and the picker is hidden rather than showing a single choice.
+	const levels = $derived(thinkingLevels[branch.model ?? defaultModel] ?? []);
 
 	let scroller: HTMLElement | undefined = $state();
 	let input: HTMLTextAreaElement | undefined = $state();
@@ -203,10 +213,20 @@
 			</button>
 		{/if}
 		{#if branch.costUsd > 0}<span class="muted">${branch.costUsd.toFixed(4)}</span>{/if}
-		<select value={branch.model ?? ""} onchange={(e) => configure(e.currentTarget.value)} title="Model for this branch">
+		<select value={branch.model ?? ""} onchange={(e) => configure({ model: e.currentTarget.value })} title="Model for this branch">
 			{#if branch.model && !models.includes(branch.model)}<option value={branch.model}>{branch.model}</option>{/if}
 			{#each models as model (model)}<option value={model}>{model}</option>{/each}
 		</select>
+		{#if levels.length > 1}
+			<select
+				value={branch.thinkingLevel ?? defaultThinkingLevel}
+				onchange={(e) => configure({ thinkingLevel: e.currentTarget.value as ThinkingLevel })}
+				title="Thinking level for this branch"
+				aria-label="Thinking level"
+			>
+				{#each levels as level (level)}<option value={level}>{level === "off" ? "no thinking" : `thinking: ${level}`}</option>{/each}
+			</select>
+		{/if}
 	</header>
 
 	{#if showNotes && seen.length > 0}

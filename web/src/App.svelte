@@ -230,6 +230,23 @@
 			run: async () => void (await client.request({ t: "configure", conversationId: branch.id, model })),
 		})),
 	});
+	// Only the levels the branch's model accepts, so the palette cannot set an unsupported one.
+	const thinkingPage = (branch: BranchInfo): PalettePage => {
+		const current = branch.thinkingLevel ?? client.defaultThinkingLevel;
+		return {
+			kind: "list",
+			title: `Thinking level for ${branch.title}`,
+			placeholder: "Search thinking levels…",
+			items: (client.thinkingLevels[branch.model ?? client.defaultModel] ?? []).map((level) => ({
+				id: `thinking:${level}`,
+				label: level === "off" ? "off (no thinking)" : level,
+				group: "Thinking",
+				icon: level === current ? "✓" : "",
+				...(level === client.defaultThinkingLevel ? { detail: "default" } : {}),
+				run: async () => void (await client.request({ t: "configure", conversationId: branch.id, thinkingLevel: level })),
+			})),
+		};
+	};
 	const toChat = (id?: number, entry: number | null = null) => {
 		view = "chat";
 		if (id !== undefined) open(id, entry);
@@ -251,6 +268,15 @@
 			act({ id: "rename", icon: "✎", label: "Rename…", detail: a.title, run: () => renamePage(a) });
 			act({ id: "delete", icon: "✕", label: "Delete branch…", detail: a.title, keywords: "remove trash discard", run: () => deletePage(a) });
 			act({ id: "model", icon: "◇", label: "Change model…", detail: a.model, run: () => modelPage(a) });
+			if ((client.thinkingLevels[a.model ?? client.defaultModel] ?? []).length > 1)
+				act({
+					id: "thinking",
+					icon: "◍",
+					label: "Change thinking level…",
+					detail: a.thinkingLevel ?? client.defaultThinkingLevel,
+					keywords: "reasoning effort think",
+					run: () => thinkingPage(a),
+				});
 			if (a.busy) act({ id: "stop", icon: "■", label: `Stop ${a.title}`, keywords: "abort cancel", run: () => void client.request({ t: "abort", conversationId: a.id }) });
 		}
 		const app = (item: Omit<PaletteItem, "group">) => items.push({ ...item, group: "Pi Branches" });
@@ -387,6 +413,9 @@
 					accept={acceptSuggestion}
 					dismiss={dismissSuggestion}
 					models={client.models}
+					defaultModel={client.defaultModel}
+					thinkingLevels={client.thinkingLevels}
+					defaultThinkingLevel={client.defaultThinkingLevel}
 					{focusId}
 					{anchor}
 					{switchAt}
@@ -397,7 +426,7 @@
 					{editBranch}
 					share={(at) => shareFrom(active.id, at)}
 					rename={(title) => void client.request({ t: "rename", conversationId: active.id, title })}
-					configure={(model) => void client.request({ t: "configure", conversationId: active.id, model })}
+					configure={(change) => void client.request({ t: "configure", conversationId: active.id, ...change })}
 				/>
 			{/key}
 		{:else}

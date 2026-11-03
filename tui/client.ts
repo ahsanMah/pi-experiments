@@ -2,7 +2,7 @@
 // live ConversationViews kept current by applying each commit's Chord ops.
 import { applyImmutable } from "@earendil-works/chord/delta";
 import WebSocket from "ws";
-import type { ClientMessage, ConversationId, ServerMessage, TreeIndex } from "../shared/protocol.ts";
+import type { ClientMessage, ConversationId, ServerMessage, ThinkingLevel, TreeIndex } from "../shared/protocol.ts";
 
 /** The parts of pi-durable's ConversationView the TUI reads. */
 export type ViewEntry = {
@@ -39,6 +39,9 @@ export class BranchesClient {
 	tree: TreeIndex = { branches: [], nodes: [], notes: [], suggestions: [], deleted: [] };
 	models: readonly string[] = [];
 	defaultModel = "";
+	/** Thinking levels each model accepts, keyed by `provider/modelId`. */
+	thinkingLevels: Readonly<Record<string, readonly ThinkingLevel[]>> = {};
+	defaultThinkingLevel: ThinkingLevel = "off";
 	readonly views = new Map<ConversationId, ConversationView>();
 
 	onTree?: () => void;
@@ -80,6 +83,8 @@ export class BranchesClient {
 			case "hello":
 				this.models = message.models;
 				this.defaultModel = message.defaultModel;
+				this.thinkingLevels = message.thinkingLevels;
+				this.defaultThinkingLevel = message.defaultThinkingLevel;
 				break;
 			case "tree":
 				this.tree = message.tree;
