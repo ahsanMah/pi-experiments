@@ -8,6 +8,7 @@
 	import { renderMarkdown } from "../../lib/markdown.ts";
 	import { textOf, type ViewEntry } from "../../lib/view.ts";
 	import { useSpace } from "../lib/space.svelte.ts";
+	import ModelPicker from "../../components/ModelPicker.svelte";
 	import ChatEntry from "./ChatEntry.svelte";
 	import Composer from "./Composer.svelte";
 	import Icon from "./Icon.svelte";
@@ -125,10 +126,12 @@
 			</div>
 		</div>
 		{#if branch.sharedIn > 0}<span class="chip shared" title="Shared notes this branch's model sees"><Icon name="sticky" size={12} />{branch.sharedIn}</span>{/if}
-		<select value={branch.model ?? client.defaultModel} onchange={(e) => space.configure(branch.id, { model: e.currentTarget.value })} title="Model for this branch" aria-label="Model">
-			{#if branch.model && !client.models.includes(branch.model)}<option value={branch.model}>{branch.model}</option>{/if}
-			{#each client.models as model (model)}<option value={model}>{model}</option>{/each}
-		</select>
+		<ModelPicker
+			value={branch.model ?? client.defaultModel}
+			models={client.models}
+			defaultModel={client.defaultModel}
+			pick={(model) => space.configure(branch.id, { model })}
+		/>
 		{#if levels.length > 1}
 			<select
 				value={branch.thinkingLevel ?? client.defaultThinkingLevel}

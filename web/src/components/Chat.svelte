@@ -6,6 +6,7 @@
 	import { renderMarkdown } from "../lib/markdown.ts";
 	import { textOf, type ConversationView, type ViewEntry } from "../lib/view.ts";
 	import Message from "./Message.svelte";
+	import ModelPicker from "./ModelPicker.svelte";
 	import NoteCard from "./NoteCard.svelte";
 	import SuggestionCard from "./SuggestionCard.svelte";
 	import Switcher from "./Switcher.svelte";
@@ -213,10 +214,7 @@
 			</button>
 		{/if}
 		{#if branch.costUsd > 0}<span class="muted">${branch.costUsd.toFixed(4)}</span>{/if}
-		<select value={branch.model ?? ""} onchange={(e) => configure({ model: e.currentTarget.value })} title="Model for this branch">
-			{#if branch.model && !models.includes(branch.model)}<option value={branch.model}>{branch.model}</option>{/if}
-			{#each models as model (model)}<option value={model}>{model}</option>{/each}
-		</select>
+		<ModelPicker value={branch.model ?? ""} {models} {defaultModel} pick={(model) => configure({ model })} />
 		{#if levels.length > 1}
 			<select
 				value={branch.thinkingLevel ?? defaultThinkingLevel}
